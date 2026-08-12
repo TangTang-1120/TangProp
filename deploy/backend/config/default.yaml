@@ -1,0 +1,105 @@
+# ============================================================
+# TangProp Backend Configuration — 仅免费模型
+# ============================================================
+
+# ── Model Configuration ──
+models:
+  default_provider: volcengine
+
+  providers:
+    # ── 完全免费 Provider ──
+
+    volcengine:
+      display_name: 火山方舟 · 豆包
+      api_base: https://ark.cn-beijing.volces.com/api/v3
+      api_key: ${ARK_API_KEY}
+      default_model: doubao-seed-2-1-turbo-260628
+      models:
+        - doubao-seed-2-1-turbo-260628
+        - doubao-seed-2-1-pro-260628
+
+    zhipu:
+      display_name: 智谱 AI
+      api_base: https://open.bigmodel.cn/api/paas/v4
+      api_key: ${ZHIPU_API_KEY}
+      default_model: glm-4-flash
+      models:
+        - glm-4-flash
+
+    siliconflow:
+      display_name: 硅基流动
+      api_base: https://api.siliconflow.cn/v1
+      api_key: ${SILICONFLOW_API_KEY}
+      default_model: Qwen/Qwen2.5-7B-Instruct
+      models:
+        - Qwen/Qwen2.5-7B-Instruct
+        - THUDM/glm-4-9b-chat
+
+# ── Agent Configuration ──
+agent:
+  max_turns: 30
+  max_response_length: 32000
+  max_tokens: 8192
+  temperature: 0.3
+  system_prompt_file: config/system_prompt.txt
+
+# ── Memory Configuration ──
+memory:
+  cloud_memory_path: ~/.workbuddy/memory/cloud/
+  user_memory_file: ~/.workbuddy/MEMORY.md
+  workspace_memory_dir: .workbuddy/memory/
+  max_chars_per_session: 3000
+  auto_clean_days: 30
+
+# ── Tool Configuration ──
+tools:
+  builtin:
+    - bash
+    - file_read
+    - file_write
+    - file_edit
+    - web_search
+    - web_fetch
+    - glob
+    - grep
+  bash:
+    timeout_ms: 120000
+    dangerous_disable_sandbox: false
+  protected_paths:
+    - ~/Desktop
+    - ~/Downloads
+    - ~/Documents
+    - /
+
+# ── Server Configuration ──
+server:
+  host: 0.0.0.0
+  port: 8080
+  cors_origins:
+    - http://localhost:3000
+    - http://localhost:5173
+
+# ── Image Generation (Pollinations 免费 + 豆包 Seedream) ──
+image:
+  default_provider: doubao
+  default_model: doubao:seedream-4
+  default_size: 1024x1024
+  pollinations:
+    # gen.pollinations.ai：flux / zimage 免 Key；legacy 作兜底
+    gen_base: https://gen.pollinations.ai/image/
+    legacy_base: https://image.pollinations.ai/p/
+    api_key: ${POLLINATIONS_API_KEY}
+    models:
+      - id: zimage
+        name: Z-Image（免费 · 艺术风格，推荐）
+        gen_model: zimage
+        free_without_key: true
+      - id: flux
+        name: Flux（免费 · 写实摄影）
+        gen_model: flux
+        free_without_key: true
+      - id: turbo
+        name: Turbo（免费 · 快速）
+        gen_model: zimage
+        legacy_model: turbo
+        free_without_key: true

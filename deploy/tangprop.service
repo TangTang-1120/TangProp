@@ -1,0 +1,17 @@
+[Unit]
+Description=TangProp Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tangprop/backend
+EnvironmentFile=/opt/tangprop/backend/.env
+Environment=PORT=8080
+ExecStartPre=-/usr/bin/fuser -k 8080/tcp
+ExecStart=/opt/tangprop/venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

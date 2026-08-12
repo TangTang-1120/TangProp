@@ -1,0 +1,1080 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WorkBuddy · AI 助手</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ==========================================================
+       Design Tokens — 深色 / 紫调 · 参考图配色基因
+       ========================================================== */
+    :root {
+      --bg-root:    #0D0B17;
+      --bg-panel:   #11101C;
+      --bg-surface: #181627;
+      --bg-elevated:#1F1D34;
+      --bg-hover:   #27253E;
+      --bg-input:   #161424;
+      --bg-bubble-u:#2B2852;
+      --bg-bubble-a:transparent;
+
+      --border-subtle: #232140;
+      --border-medium: #302E50;
+      --border-strong: #434166;
+
+      --fg-primary:   #EDECFA;
+      --fg-secondary: #ABA8C8;
+      --fg-tertiary:  #726F95;
+      --fg-placeholder:#5C5980;
+
+      --accent:       #6366F1;
+      --accent-hover: #787BF5;
+      --accent-soft:  rgba(99,102,241,0.12);
+      --accent-glow:  rgba(99,102,241,0.5);
+
+      --success: #4ADE80;
+      --warning: #FBBF24;
+      --danger:  #F87171;
+      --pink:    #F472B6;
+
+      --font-sans: 'Geist','Noto Sans SC',-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;
+      --font-mono: 'Geist Mono','SF Mono',ui-monospace,Menlo,monospace;
+
+      --r-xs:  6px;
+      --r-sm:  10px;
+      --r-md:  14px;
+      --r-lg:  18px;
+      --r-pill: 999px;
+
+      --rail-w: 56px;
+      --sidebar-w: 280px;
+
+      --ease-out: cubic-bezier(0.16,1,0.3,1);
+      --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+    }
+
+    /* Base */
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;overflow:hidden}
+    body{
+      font-family:var(--font-sans);font-size:14px;line-height:1.55;
+      color:var(--fg-secondary);background:var(--bg-root);
+      -webkit-font-smoothing:antialiased;letter-spacing:-0.005em;
+    }
+    button,input,textarea{font-family:inherit;color:inherit}
+    button{border:none;background:none;cursor:pointer;padding:0}
+    ::selection{background:var(--accent-soft);color:var(--fg-primary)}
+
+    /* Ambient light */
+    body::before{
+      content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+      background:
+        radial-gradient(50% 60% at 8% 15%, rgba(99,102,241,0.09),transparent 65%),
+        radial-gradient(40% 50% at 95% 85%, rgba(139,92,246,0.06),transparent 60%),
+        radial-gradient(30% 35% at 45% 50%, rgba(168,85,247,0.04),transparent 60%);
+    }
+
+    /* ==========================================================
+       Layout — rail | sidebar | main
+       ========================================================== */
+    .app{position:relative;z-index:1;display:grid;grid-template-columns:var(--rail-w) var(--sidebar-w) 1fr;height:100vh;min-height:700px}
+
+    /* ── Rail ──────────────────────────────────────────────── */
+    .rail{
+      border-right:1px solid var(--border-subtle);
+      padding:18px 0 18px;display:flex;flex-direction:column;align-items:center;gap:4px;
+      background:linear-gradient(180deg,rgba(17,16,28,0.8),rgba(13,11,23,0.95));
+    }
+    .rail-brand{
+      width:34px;height:34px;border-radius:9px;
+      background:linear-gradient(135deg,var(--accent),#8B5CF6);
+      display:grid;place-items:center;color:#fff;font-weight:600;font-size:14px;
+      box-shadow:0 4px 16px -4px var(--accent-glow);
+      margin-bottom:14px;transition:transform 180ms var(--ease-spring);
+    }
+    .rail-brand:hover{transform:scale(1.08)}
+    .rail-nav{display:flex;flex-direction:column;gap:2px;align-items:center}
+    .rail-btn{
+      width:40px;height:40px;border-radius:var(--r-sm);display:grid;place-items:center;
+      color:var(--fg-tertiary);transition:color 150ms,background 150ms,transform 180ms var(--ease-spring);
+      position:relative;
+    }
+    .rail-btn svg{width:18px;height:18px}
+    .rail-btn:hover{color:var(--fg-secondary);background:var(--bg-hover)}
+    .rail-btn[aria-current="true"]{
+      color:var(--fg-primary);background:var(--bg-elevated);
+    }
+    .rail-btn[aria-current="true"]::after{
+      content:'';position:absolute;left:-9px;top:50%;transform:translateY(-50%);
+      width:2.5px;height:16px;border-radius:0 3px 3px 0;
+      background:var(--accent);box-shadow:0 0 12px var(--accent-glow);
+    }
+    .rail-foot{margin-top:auto;display:flex;flex-direction:column;gap:6px;align-items:center}
+
+    /* ── Sidebar ───────────────────────────────────────────── */
+    .sidebar{
+      border-right:1px solid var(--border-subtle);
+      background:var(--bg-panel);
+      display:flex;flex-direction:column;
+      padding:14px 14px 10px;gap:12px;
+      overflow:hidden;transition:opacity 200ms,transform 200ms var(--ease-out);
+    }
+
+    .sidebar-head{
+      display:flex;align-items:center;gap:8px;color:var(--fg-primary);
+      font-size:13.5px;font-weight:600;letter-spacing:-0.01em;
+    }
+    .sidebar-head .spc{flex:1}
+    .sidebar-head .btn-icon{
+      width:28px;height:28px;border-radius:var(--r-xs);display:grid;place-items:center;
+      color:var(--fg-tertiary);transition:color 150ms,background 150ms;
+    }
+    .sidebar-head .btn-icon:hover{color:var(--fg-primary);background:var(--bg-hover)}
+    .sidebar-head .btn-icon svg{width:14px;height:14px}
+
+    .sidebar-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+    .sidebar-list::-webkit-scrollbar{width:4px}
+    .sidebar-list::-webkit-scrollbar-thumb{background:var(--border-medium);border-radius:2px}
+
+    .sidebar-item{
+      padding:8px 10px;border-radius:var(--r-sm);
+      color:var(--fg-secondary);font-size:13px;
+      cursor:pointer;
+      transition:background 120ms,color 120ms;
+      display:flex;align-items:center;gap:8px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .sidebar-item:hover{background:var(--bg-hover);color:var(--fg-primary)}
+    .sidebar-item.active{background:var(--bg-elevated);color:var(--fg-primary)}
+
+    .sidebar-item .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+    .sidebar-item .dot.muted{background:var(--border-strong)}
+    .sidebar-item .badge{
+      font:10px/1 var(--font-mono);color:var(--fg-tertiary);
+      margin-left:auto;padding:2px 6px;border-radius:var(--r-pill);
+      background:var(--bg-surface);border:1px solid var(--border-subtle);
+    }
+
+    .sidebar-footer{
+      display:flex;align-items:center;gap:10px;
+      padding:10px;border-top:1px solid var(--border-subtle);
+    }
+    .sidebar-footer .user-pic{
+      width:32px;height:32px;border-radius:50%;
+      background:linear-gradient(135deg,#FB7185,#E11D48);
+      display:grid;place-items:center;color:#fff;font-weight:600;font-size:11px;
+      box-shadow:0 0 0 2px var(--bg-panel);
+    }
+    .sidebar-footer .user-info{min-width:0;line-height:1.2}
+    .sidebar-footer .user-info .n{color:var(--fg-primary);font-size:12.5px;font-weight:500}
+    .sidebar-footer .user-info .r{color:var(--fg-tertiary);font-size:11px;margin-top:1px}
+
+    /* ── Main ──────────────────────────────────────────────── */
+    .main{
+      display:flex;flex-direction:column;
+      background:var(--bg-root);
+      overflow:hidden;
+    }
+
+    /* Chat header */
+    .chat-head{
+      display:flex;align-items:center;gap:12px;
+      padding:14px 20px;border-bottom:1px solid var(--border-subtle);
+      flex:none;
+    }
+    .chat-head .title{
+      color:var(--fg-primary);font-size:15px;font-weight:600;letter-spacing:-0.01em;
+    }
+    .chat-head .status{
+      display:flex;align-items:center;gap:5px;font-size:12px;color:var(--fg-tertiary);
+      margin-left:10px;
+    }
+    .chat-head .status::before{
+      content:'';width:5px;height:5px;border-radius:50%;background:var(--success);
+      box-shadow:0 0 6px var(--success);
+    }
+    .chat-head .actions{margin-left:auto;display:flex;gap:4px}
+    .chat-head .act{
+      width:30px;height:30px;border-radius:var(--r-xs);display:grid;place-items:center;
+      color:var(--fg-tertiary);transition:color 150ms,background 150ms;
+    }
+    .chat-head .act:hover{color:var(--fg-primary);background:var(--bg-hover)}
+    .chat-head .act svg{width:15px;height:15px}
+
+    /* Messages area */
+    .messages{
+      flex:1;overflow-y:auto;padding:20px 24px;
+      display:flex;flex-direction:column;gap:20px;
+      scroll-behavior:smooth;
+    }
+    .messages::-webkit-scrollbar{width:6px}
+    .messages::-webkit-scrollbar-thumb{background:var(--border-medium);border-radius:3px}
+
+    /* Welcome screen */
+    .welcome{
+      flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      padding:40px;text-align:center;gap:24px;
+    }
+    .welcome .logo{
+      width:64px;height:64px;border-radius:16px;
+      background:linear-gradient(135deg,var(--accent),#8B5CF6);
+      display:grid;place-items:center;color:#fff;font-size:24px;font-weight:700;
+      box-shadow:0 12px 40px -16px var(--accent-glow);
+    }
+    .welcome h2{color:var(--fg-primary);font-size:22px;font-weight:600;letter-spacing:-0.02em}
+    .welcome p{color:var(--fg-tertiary);font-size:14px;max-width:400px;line-height:1.6}
+    .welcome .prompts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:520px}
+    .welcome .prompt{
+      padding:8px 16px;border-radius:var(--r-pill);
+      background:var(--bg-surface);border:1px solid var(--border-subtle);
+      color:var(--fg-secondary);font-size:13px;cursor:pointer;
+      transition:border-color 150ms,color 150ms,background 150ms;
+    }
+    .welcome .prompt:hover{
+      border-color:var(--border-medium);color:var(--fg-primary);background:var(--bg-elevated);
+    }
+
+    /* Message bubble */
+    .msg{display:flex;gap:12px;max-width:780px;animation:msgIn 350ms var(--ease-out)}
+    .msg.user{flex-direction:row-reverse;align-self:flex-end}
+    .msg .avatar{
+      width:32px;height:32px;border-radius:50%;flex:none;
+      display:grid;place-items:center;color:#fff;font-weight:600;font-size:11px;
+    }
+    .msg .avatar.av-user{background:linear-gradient(135deg,#FB7185,#E11D48)}
+    .msg .avatar.av-ai{background:linear-gradient(135deg,var(--accent),#7C3AED);box-shadow:0 0 0 2px var(--bg-root),0 4px 16px -4px var(--accent-glow)}
+    .msg .body{max-width:100%}
+    .msg .bubble{
+      padding:10px 15px;border-radius:var(--r-md);font-size:14px;line-height:1.65;
+      color:var(--fg-primary);
+    }
+    .msg.user .bubble{background:var(--bg-bubble-u);border-bottom-right-radius:var(--r-xs)}
+    .msg.assistant .bubble{background:transparent;padding-left:0;color:var(--fg-secondary)}
+    .msg .time{font-size:10.5px;color:var(--fg-tertiary);margin-top:4px;padding-left:2px}
+
+    /* Code block inside messages */
+    .msg .bubble pre{
+      margin:8px 0;padding:12px 15px;border-radius:var(--r-sm);
+      background:var(--bg-surface);border:1px solid var(--border-subtle);
+      font:12px/1.55 var(--font-mono);
+      color:var(--fg-secondary);overflow-x:auto;
+      white-space:pre-wrap;word-break:break-word;
+    }
+    .msg .bubble code{font:12px/1.55 var(--font-mono);background:var(--bg-surface);padding:1px 5px;border-radius:4px}
+    .msg .bubble ul,.msg .bubble ol{padding-left:20px;margin:6px 0}
+    .msg .bubble li{margin:3px 0}
+    .msg .bubble strong{color:var(--fg-primary)}
+
+    /* Loading dots */
+    .dots{display:inline-flex;gap:4px;padding:4px 0}
+    .dots span{width:5px;height:5px;border-radius:50%;background:var(--fg-tertiary);animation:bounce 1.2s infinite}
+    .dots span:nth-child(2){animation-delay:0.15s}
+    .dots span:nth-child(3){animation-delay:0.3s}
+    @keyframes bounce{0%,60%,100%{opacity:0.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-4px)}}
+    @keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+    /* Input area */
+    .input-area{flex:none;padding:12px 20px 18px;background:linear-gradient(180deg,transparent,var(--bg-root) 20%)}
+    .input-bar{
+      display:flex;align-items:flex-end;gap:10px;
+      padding:10px 14px;background:var(--bg-input);
+      border:1px solid var(--border-medium);border-radius:var(--r-md);
+      transition:border-color 150ms,box-shadow 200ms;
+    }
+    .input-bar:focus-within{
+      border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);
+    }
+    .input-bar textarea{
+      flex:1;border:0;outline:0;background:transparent;resize:none;
+      font-size:14px;line-height:1.5;color:var(--fg-primary);
+      max-height:120px;min-height:20px;overflow-y:auto;
+    }
+    .input-bar textarea::placeholder{color:var(--fg-placeholder)}
+    .input-bar textarea::-webkit-scrollbar{width:4px}
+    .input-bar textarea::-webkit-scrollbar-thumb{background:var(--border-medium);border-radius:2px}
+    .send-btn{
+      width:36px;height:36px;border-radius:var(--r-sm);flex:none;
+      display:grid;place-items:center;
+      background:var(--accent);color:#fff;
+      transition:background 150ms,transform 150ms var(--ease-spring),box-shadow 150ms;
+      box-shadow:0 4px 14px -4px var(--accent-glow);
+    }
+    .send-btn:hover{background:var(--accent-hover);transform:scale(1.05)}
+    .send-btn:active{transform:scale(0.95)}
+    .send-btn:disabled{background:var(--bg-elevated);color:var(--fg-tertiary);box-shadow:none;cursor:default}
+    .send-btn svg{width:16px;height:16px}
+    .input-hint{font-size:11px;color:var(--fg-tertiary);padding:6px 0 0 4px}
+
+    /* ── Panels (automations/skills/experts/connectors/memory) ── */
+    .panel{
+      flex:1;display:flex;flex-direction:column;overflow:hidden;
+    }
+    .panel-head{
+      display:flex;align-items:center;gap:10px;
+      padding:14px 20px;border-bottom:1px solid var(--border-subtle);
+      flex:none;
+    }
+    .panel-head .p-title{color:var(--fg-primary);font-size:15px;font-weight:600;letter-spacing:-0.01em}
+    .panel-head .p-count{color:var(--fg-tertiary);font-size:12px;margin-left:6px}
+    .panel-head .spc{flex:1}
+    .panel-head .btn-pri{
+      padding:7px 14px;border-radius:var(--r-pill);
+      background:var(--accent);color:#fff;font-size:12.5px;font-weight:500;
+      transition:background 150ms;box-shadow:0 4px 12px -4px var(--accent-glow);
+    }
+    .panel-head .btn-pri:hover{background:var(--accent-hover)}
+    .panel-body{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:8px}
+    .panel-body::-webkit-scrollbar{width:5px}
+    .panel-body::-webkit-scrollbar-thumb{background:var(--border-medium);border-radius:3px}
+
+    .card{
+      background:var(--bg-surface);border:1px solid var(--border-subtle);
+      border-radius:var(--r-md);padding:14px 16px;
+      transition:border-color 150ms,transform 150ms var(--ease-out);
+      cursor:pointer;
+    }
+    .card:hover{border-color:var(--border-medium);transform:translateX(2px)}
+    .card .c-row{display:flex;align-items:center;gap:10px}
+    .card .c-row+.c-row{margin-top:8px}
+    .card .c-icon{
+      width:34px;height:34px;border-radius:var(--r-sm);flex:none;
+      display:grid;place-items:center;color:#fff;font-weight:600;font-size:12px;
+    }
+    .card .c-icon.ci-purple{background:linear-gradient(135deg,var(--accent),#7C3AED)}
+    .card .c-icon.ci-pink{background:linear-gradient(135deg,#F472B6,#EC4899)}
+    .card .c-icon.ci-blue{background:linear-gradient(135deg,#60A5FA,#3B82F6)}
+    .card .c-icon.ci-green{background:linear-gradient(135deg,#34D399,#10B981)}
+    .card .c-icon.ci-orange{background:linear-gradient(135deg,#FBBF24,#F59E0B)}
+    .card .c-meta{min-width:0}
+    .card .c-title{color:var(--fg-primary);font-size:13px;font-weight:500}
+    .card .c-sub{color:var(--fg-tertiary);font-size:11.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis}
+    .card .c-tag{
+      margin-left:auto;flex:none;
+      padding:3px 8px;border-radius:var(--r-pill);
+      font-size:10.5px;color:var(--fg-tertiary);
+      background:var(--bg-elevated);border:1px solid var(--border-subtle);
+    }
+    .card .c-tag.on{color:var(--success);border-color:var(--success);background:rgba(74,222,128,0.08)}
+    .card .c-tag.off{color:var(--fg-tertiary)}
+
+    /* Empty state */
+    .empty{text-align:center;padding:40px 20px;color:var(--fg-tertiary)}
+    .empty svg{width:40px;height:40px;color:var(--border-strong);margin-bottom:12px}
+
+    /* Toggle switch */
+    .toggle{position:relative;display:inline-block;width:36px;height:20px}
+    .toggle input{opacity:0;width:0;height:0}
+    .toggle .slider{
+      position:absolute;cursor:pointer;inset:0;background:var(--bg-elevated);
+      border:1px solid var(--border-medium);border-radius:var(--r-pill);
+      transition:background 200ms,border-color 200ms;
+    }
+    .toggle .slider::before{
+      content:'';position:absolute;width:14px;height:14px;left:2px;top:2px;
+      border-radius:50%;background:var(--fg-tertiary);transition:transform 200ms var(--ease-out),background 200ms;
+    }
+    .toggle input:checked+.slider{background:var(--accent);border-color:var(--accent)}
+    .toggle input:checked+.slider::before{transform:translateX(16px);background:#fff}
+
+    /* ── Utility ── */
+    .hidden{display:none!important}
+    .fade{animation:fadeIn 250ms var(--ease-out)}
+    @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- ==================== LEFT RAIL ==================== -->
+    <nav class="rail" role="navigation">
+      <div class="rail-brand" title="WorkBuddy">W</div>
+      <div class="rail-nav">
+        <button class="rail-btn" data-nav="chat" aria-current="true" title="对话">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+        </button>
+        <button class="rail-btn" data-nav="automations" title="自动化">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg>
+        </button>
+        <button class="rail-btn" data-nav="skills" title="技能">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </button>
+        <button class="rail-btn" data-nav="experts" title="专家">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 22c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>
+        </button>
+        <button class="rail-btn" data-nav="connectors" title="连接器">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1.5"/><rect x="14" y="14" width="8" height="8" rx="1.5"/><rect x="14" y="2" width="8" height="8" rx="1.5"/><rect x="2" y="14" width="8" height="8" rx="1.5"/></svg>
+        </button>
+        <button class="rail-btn" data-nav="memory" title="记忆">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9 15 12 12 13 13 16 10"/></svg>
+        </button>
+      </div>
+      <div class="rail-foot">
+        <button class="rail-btn" title="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </nav>
+
+    <!-- ==================== SIDEBAR ==================== -->
+    <aside class="sidebar" id="sidebar">
+      <!-- Chat sidebar (default) -->
+      <div id="sidebar-chat">
+        <div class="sidebar-head">
+          <span>会话</span>
+          <span class="spc"></span>
+          <button class="btn-icon" title="新建对话" onclick="newConversation()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <div class="sidebar-list" id="conv-list">
+          <div class="sidebar-item active" data-conv="0">
+            <span class="dot"></span> 新对话
+          </div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="user-pic">王</div>
+          <div class="user-info">
+            <div class="n">王小明</div>
+            <div class="r">积分 1,280</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Automations sidebar -->
+      <div id="sidebar-automations" class="hidden">
+        <div class="sidebar-head">
+          <span>我的自动化</span>
+          <span class="spc"></span>
+          <button class="btn-icon" title="新建自动化">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <div class="sidebar-list">
+          <div class="sidebar-item"><span class="dot"></span>日报生成<span class="badge">每日</span></div>
+          <div class="sidebar-item"><span class="dot"></span>代码审查<span class="badge">推送时</span></div>
+          <div class="sidebar-item"><span class="dot muted"></span>周报汇总<span class="badge">每周五</span></div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="user-pic">王</div>
+          <div class="user-info">
+            <div class="n">3 个自动化</div>
+            <div class="r">2 个运行中</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skills sidebar -->
+      <div id="sidebar-skills" class="hidden">
+        <div class="sidebar-head">
+          <span>已安装技能</span>
+          <span class="spc"></span>
+          <button class="btn-icon" title="发现技能">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </button>
+        </div>
+        <div class="sidebar-list">
+          <div class="sidebar-item"><span class="dot"></span>PPT 生成</div>
+          <div class="sidebar-item"><span class="dot"></span>Excel 处理</div>
+          <div class="sidebar-item"><span class="dot"></span>PDF 工具包</div>
+          <div class="sidebar-item"><span class="dot"></span>GitHub 操作</div>
+          <div class="sidebar-item"><span class="dot muted"></span>浏览器自动化</div>
+          <div class="sidebar-item"><span class="dot muted"></span>金融数据查询</div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="user-pic">王</div>
+          <div class="user-info">
+            <div class="n">6 个技能</div>
+            <div class="r">4 个已启用</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Experts sidebar -->
+      <div id="sidebar-experts" class="hidden">
+        <div class="sidebar-head">
+          <span>专家中心</span>
+          <span class="spc"></span>
+          <button class="btn-icon" title="浏览专家">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <div class="sidebar-list">
+          <div class="sidebar-item"><span class="dot"></span>前端架构师</div>
+          <div class="sidebar-item"><span class="dot"></span>数据分析师</div>
+          <div class="sidebar-item"><span class="dot muted"></span>法律顾问</div>
+          <div class="sidebar-item"><span class="dot muted"></span>金融分析师</div>
+          <div class="sidebar-item"><span class="dot muted"></span>UI/UX 设计师</div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="user-pic">王</div>
+          <div class="user-info">
+            <div class="n">100+ 专家</div>
+            <div class="r">按需对话</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Connectors sidebar -->
+      <div id="sidebar-connectors" class="hidden">
+        <div class="sidebar-head">
+          <span>连接器</span>
+          <span class="spc"></span>
+          <button class="btn-icon" title="添加连接器">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <div class="sidebar-list">
+          <div class="sidebar-item"><span class="dot"></span>GitHub<span class="badge">已连接</span></div>
+          <div class="sidebar-item"><span class="dot"></span>飞书<span class="badge">已连接</span></div>
+          <div class="sidebar-item"><span class="dot muted"></span>企业微信</div>
+          <div class="sidebar-item"><span class="dot muted"></span>钉钉</div>
+          <div class="sidebar-item"><span class="dot muted"></span>TAPD</div>
+          <div class="sidebar-item"><span class="dot muted"></span>Notion</div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="user-pic">王</div>
+          <div class="user-info">
+            <div class="n">2 个已连接</div>
+            <div class="r">30+ 可用</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory sidebar -->
+      <div id="sidebar-memory" class="hidden">
+        <div class="sidebar-head">
+          <span>记忆管理</span>
+        </div>
+        <div class="sidebar-list">
+          <div class="sidebar-item"><span class="dot"></span>个人偏好</div>
+          <div class="sidebar-item"><span class="dot"></span>项目上下文</div>
+          <div class="sidebar-item"><span class="dot muted"></span>历史对话摘要</div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="user-pic">王</div>
+          <div class="user-info">
+            <div class="n">3 层记忆系统</div>
+            <div class="r">自动同步</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ==================== MAIN AREA ==================== -->
+    <div class="main" id="main">
+      <!-- Chat view (default) -->
+      <div id="view-chat" class="fade" style="display:flex;flex-direction:column;height:100%">
+        <div class="chat-head">
+          <div class="title">新对话</div>
+          <span class="status">在线 · WorkBuddy AI</span>
+          <div class="actions">
+            <button class="act" title="分享" id="btn-share">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+            </button>
+            <button class="act" title="更多" onclick="exportChat()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Messages / Welcome -->
+        <div id="messages-wrap" style="flex:1;overflow-y:auto;display:flex;flex-direction:column">
+          <div class="welcome" id="welcome">
+            <div class="logo">W</div>
+            <h2>你好，我是 WorkBuddy</h2>
+            <p>一个强大的 AI 助手，帮你研究写作、分析数据、搭建应用——直接告诉我你想做什么</p>
+            <div class="prompts">
+              <button class="prompt" onclick="sendPrompt('帮我用 Python 写一个数据分析脚本')">写个数据分析脚本</button>
+              <button class="prompt" onclick="sendPrompt('解释一下 React Server Components 的原理')">解释 RSC 原理</button>
+              <button class="prompt" onclick="sendPrompt('帮我设计一个 REST API 接口规范')">设计 REST API</button>
+              <button class="prompt" onclick="sendPrompt('比较 Vue3 和 React19 的主要差异')">Vue3 vs React19</button>
+            </div>
+          </div>
+          <div class="messages" id="messages"></div>
+        </div>
+
+        <div class="input-area">
+          <div class="input-bar" id="input-bar">
+            <textarea id="user-input" rows="1" placeholder="给 WorkBuddy 发消息…" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+            <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled title="发送 (Enter)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+            </button>
+          </div>
+          <div class="input-hint">WorkBuddy 可能会出错，请验证重要信息</div>
+        </div>
+      </div>
+
+      <!-- ===== Panel: Automations ===== -->
+      <div id="view-automations" class="panel hidden fade">
+        <div class="panel-head">
+          <span class="p-title">自动化任务</span><span class="p-count">3 项</span>
+          <span class="spc"></span>
+          <button class="btn-pri">+ 新建</button>
+        </div>
+        <div class="panel-body">
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-purple">日</div><div class="c-meta"><div class="c-title">每日站会纪要生成</div><div class="c-sub">每天 09:00 · 自动汇总昨日工作，生成今日计划</div></div><span class="c-tag on">运行中</span></div>
+            <div class="c-row" style="margin-top:8px"><span style="font-size:11px;color:var(--fg-tertiary)">下次执行: 明天 09:00</span><span class="spc"></span><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-blue">审</div><div class="c-meta"><div class="c-title">PR 代码自动审查</div><div class="c-sub">推送时触发 · 检查代码风格、安全漏洞和最佳实践</div></div><span class="c-tag on">运行中</span></div>
+            <div class="c-row" style="margin-top:8px"><span style="font-size:11px;color:var(--fg-tertiary)">监听: 3 个仓库</span><span class="spc"></span><label class="toggle"><input type="checkbox" checked><span class="slider"></span></label></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-pink">周</div><div class="c-meta"><div class="c-title">周五周报汇总</div><div class="c-sub">每周五 17:30 · 汇总本周任务和产出</div></div><span class="c-tag off">已暂停</span></div>
+            <div class="c-row" style="margin-top:8px"><span style="font-size:11px;color:var(--fg-tertiary)">下次执行: 周五 17:30</span><span class="spc"></span><label class="toggle"><input type="checkbox"><span class="slider"></span></label></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Panel: Skills ===== -->
+      <div id="view-skills" class="panel hidden fade">
+        <div class="panel-head">
+          <span class="p-title">技能市场</span><span class="p-count">6 已安装</span>
+          <span class="spc"></span>
+          <button class="btn-pri">发现更多</button>
+        </div>
+        <div class="panel-body">
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-purple">PPT</div><div class="c-meta"><div class="c-title">PPT 生成</div><div class="c-sub">根据内容自动生成演示文稿，支持自定义模板</div></div><span class="c-tag on">已启用</span></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-green">X</div><div class="c-meta"><div class="c-title">Excel 处理</div><div class="c-sub">读写、编辑和修复 Excel 文件，支持公式和图表</div></div><span class="c-tag on">已启用</span></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-blue">PDF</div><div class="c-meta"><div class="c-title">PDF 工具包</div><div class="c-sub">阅读、编辑、转换、合并 PDF，支持 OCR 识别</div></div><span class="c-tag on">已启用</span></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-blue">GH</div><div class="c-meta"><div class="c-title">GitHub 操作</div><div class="c-sub">管理 Issues、PR、CI 和代码仓库操作</div></div><span class="c-tag on">已启用</span></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-orange">B</div><div class="c-meta"><div class="c-title">浏览器自动化</div><div class="c-sub">网页截图、数据抓取、表单填充等自动化操作</div></div><span class="c-tag off">已安装</span></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-orange">金</div><div class="c-meta"><div class="c-title">金融数据查询</div><div class="c-sub">实时行情、财报、研报等金融市场数据获取</div></div><span class="c-tag off">已安装</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Panel: Experts ===== -->
+      <div id="view-experts" class="panel hidden fade">
+        <div class="panel-head">
+          <span class="p-title">专家中心</span><span class="p-count">100+</span>
+          <span class="spc"></span>
+          <button class="btn-pri">浏览全部</button>
+        </div>
+        <div class="panel-body">
+          <div class="card"><div class="c-row"><div class="c-icon ci-purple">&lt;/&gt;</div><div class="c-meta"><div class="c-title">前端架构师</div><div class="c-sub">React、Vue、Next.js、性能优化、组件设计</div></div><span class="c-tag">技术</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-blue">数</div><div class="c-meta"><div class="c-title">数据分析师</div><div class="c-sub">Python、SQL、可视化、统计分析、机器学习</div></div><span class="c-tag">数据</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-green">法</div><div class="c-meta"><div class="c-title">法律顾问</div><div class="c-sub">合同审查、法规检索、知识产权、合规咨询</div></div><span class="c-tag">法律</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-orange">钱</div><div class="c-meta"><div class="c-title">金融分析师</div><div class="c-sub">投资分析、财报解读、估值建模、风险管理</div></div><span class="c-tag">金融</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-pink">UI</div><div class="c-meta"><div class="c-title">UI/UX 设计师</div><div class="c-sub">界面设计评审、设计系统、交互优化建议</div></div><span class="c-tag">设计</span></div></div>
+        </div>
+      </div>
+
+      <!-- ===== Panel: Connectors ===== -->
+      <div id="view-connectors" class="panel hidden fade">
+        <div class="panel-head">
+          <span class="p-title">连接器管理</span><span class="p-count">2/30+</span>
+          <span class="spc"></span>
+          <button class="btn-pri">+ 添加</button>
+        </div>
+        <div class="panel-body">
+          <div class="card"><div class="c-row"><div class="c-icon ci-blue">GH</div><div class="c-meta"><div class="c-title">GitHub</div><div class="c-sub">Issues · Pull Requests · CI/CD · 仓库管理</div></div><span class="c-tag on">已连接</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-blue">飞</div><div class="c-meta"><div class="c-title">飞书</div><div class="c-sub">消息 · 文档 · 日历 · 审批</div></div><span class="c-tag on">已连接</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-purple">企</div><div class="c-meta"><div class="c-title">企业微信</div><div class="c-sub">即时通讯 · 客户联系 · 应用管理</div></div><span class="c-tag off">未连接</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-purple">钉</div><div class="c-meta"><div class="c-title">钉钉</div><div class="c-sub">消息通知 · 审批流 · 智能人事</div></div><span class="c-tag off">未连接</span></div></div>
+          <div class="card"><div class="c-row"><div class="c-icon ci-orange">T</div><div class="c-meta"><div class="c-title">TAPD</div><div class="c-sub">需求 · 缺陷 · 任务 · 迭代管理</div></div><span class="c-tag off">未连接</span></div></div>
+        </div>
+      </div>
+
+      <!-- ===== Panel: Memory ===== -->
+      <div id="view-memory" class="panel hidden fade">
+        <div class="panel-head">
+          <span class="p-title">记忆系统</span><span class="p-count">3 层</span>
+          <span class="spc"></span>
+        </div>
+        <div class="panel-body">
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-purple">云</div><div class="c-meta"><div class="c-title">Layer 1 · 云端记忆</div><div class="c-sub">自动学习的用户画像和历史对话检索，服务端管理</div></div><span class="c-tag on">自动</span></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-blue">户</div><div class="c-meta"><div class="c-title">Layer 2 · 用户本地记忆</div><div class="c-sub">跨项目的精确规则和个人偏好，手动维护</div></div><span class="c-tag on">活跃</span></div>
+          </div>
+          <div class="card">
+            <div class="c-row"><div class="c-icon ci-green">项</div><div class="c-meta"><div class="c-title">Layer 3 · 工作区记忆</div><div class="c-sub">每日工作日志 + 项目长期笔记，自动记录</div></div><span class="c-tag on">活跃</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ==========================================================
+       State
+       ========================================================== */
+    const state = {
+      activeNav: 'chat',
+      conversations: [{ id: 'conv-0', title: '新对话', messages: [] }],
+      activeConv: 'conv-0',
+      convCount: 0,
+      isResponding: false,
+    };
+
+    /* ==========================================================
+       Navigation
+       ========================================================== */
+    const allRailBtns = document.querySelectorAll('.rail-btn[data-nav]');
+    const allViews = {
+      chat: document.getElementById('view-chat'),
+      automations: document.getElementById('view-automations'),
+      skills: document.getElementById('view-skills'),
+      experts: document.getElementById('view-experts'),
+      connectors: document.getElementById('view-connectors'),
+      memory: document.getElementById('view-memory'),
+    };
+    const allSidebarPanels = {
+      chat: document.getElementById('sidebar-chat'),
+      automations: document.getElementById('sidebar-automations'),
+      skills: document.getElementById('sidebar-skills'),
+      experts: document.getElementById('sidebar-experts'),
+      connectors: document.getElementById('sidebar-connectors'),
+      memory: document.getElementById('sidebar-memory'),
+    };
+
+    allRailBtns.forEach(btn => {
+      btn.addEventListener('click', () => navigateTo(btn.dataset.nav));
+    });
+
+    function navigateTo(nav) {
+      state.activeNav = nav;
+
+      // Update rail active state
+      allRailBtns.forEach(b => b.removeAttribute('aria-current'));
+      const target = document.querySelector(`.rail-btn[data-nav="${nav}"]`);
+      if (target) target.setAttribute('aria-current', 'true');
+
+      // Toggle main views
+      Object.entries(allViews).forEach(([key, el]) => {
+        if (key === nav) { el.classList.remove('hidden'); el.classList.add('fade'); }
+        else el.classList.add('hidden');
+      });
+
+      // Toggle sidebar panels
+      Object.entries(allSidebarPanels).forEach(([key, el]) => {
+        if (key === nav) el.classList.remove('hidden');
+        else el.classList.add('hidden');
+      });
+
+      // Focus input when navigating to chat
+      if (nav === 'chat') {
+        setTimeout(() => document.getElementById('user-input')?.focus(), 100);
+      }
+    }
+
+    /* ==========================================================
+       Chat: Send message
+       ========================================================== */
+    const userInput = document.getElementById('user-input');
+    const sendBtn = document.getElementById('send-btn');
+    const messages = document.getElementById('messages');
+    const welcome = document.getElementById('welcome');
+    const messagesWrap = document.getElementById('messages-wrap');
+
+    userInput.addEventListener('input', () => {
+      sendBtn.disabled = userInput.value.trim() === '' || state.isResponding;
+    });
+
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    }
+
+    function handleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function showWelcome(show) {
+      if (show) {
+        welcome.classList.remove('hidden');
+        messages.innerHTML = '';
+      } else {
+        welcome.classList.add('hidden');
+      }
+    }
+
+    function sendMessage() {
+      const text = userInput.value.trim();
+      if (!text || state.isResponding) return;
+      state.isResponding = true;
+      sendBtn.disabled = true;
+      showWelcome(false);
+
+      appendMessage('user', text);
+      userInput.value = '';
+      userInput.style.height = 'auto';
+      userInput.focus();
+
+      // Update conversation title
+      const conv = state.conversations.find(c => c.id === state.activeConv);
+      if (conv && conv.title === '新对话') {
+        conv.title = text.slice(0, 30) + (text.length > 30 ? '…' : '');
+        refreshConvList();
+      }
+
+      // Simulate AI thinking
+      appendMessage('assistant', '<div class="dots"><span></span><span></span><span></span></div>', true);
+      messages.scrollTop = messages.scrollHeight;
+      messagesWrap.scrollTop = messagesWrap.scrollHeight;
+
+      simulateResponse(text);
+    }
+
+    function sendPrompt(text) {
+      userInput.value = text;
+      sendBtn.disabled = false;
+      sendMessage();
+    }
+
+    function appendMessage(role, content, isTemp = false) {
+      const div = document.createElement('div');
+      div.className = `msg ${role}`;
+      div.setAttribute('data-temp', isTemp ? '1' : '0');
+      div.innerHTML = role === 'user'
+        ? `<div class="body"><div class="bubble">${escapeHtml(content)}</div><div class="time">刚刚</div></div><div class="avatar av-user">我</div>`
+        : `<div class="avatar av-ai">W</div><div class="body"><div class="bubble">${content}</div><div class="time">刚刚</div></div>`;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+      messagesWrap.scrollTop = messagesWrap.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      const el = document.createElement('span');
+      el.textContent = s;
+      return el.innerHTML;
+    }
+
+    /* ==========================================================
+       Simulated AI responses
+       ========================================================== */
+    const responses = {
+      python: `Python 数据分析脚本：
+
+<pre><code>import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 读取数据
+df = pd.read_csv('data.csv')
+
+# 基础统计
+print("数据概览：")
+print(df.describe())
+
+# 按类别分组聚合
+grouped = df.groupby('category').agg({
+    'value': ['sum', 'mean', 'count']
+}).round(2)
+
+# 可视化
+fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+df['value'].hist(ax=ax[0], bins=30)
+df.groupby('category')['value'].mean().plot.bar(ax=ax[1])
+plt.tight_layout()
+plt.show()</code></pre>
+
+这是一个**标准的数据分析模板**：先用 Pandas 读取和描述数据，再分组聚合，最后用 Matplotlib 可视化。你可以根据实际数据字段调整 `category` 和 `value` 列名。需要我帮你针对具体数据做定制吗？`,
+
+      rsc: `React Server Components (RSC) 的核心原理：
+
+**1. 服务器端渲染组件**
+RSC 允许组件在服务器上运行，只将渲染结果发送到客户端。这与传统的 SSR（服务端渲染整个 HTML 页面）不同——RSC 只渲染组件树中标记为 Server Component 的部分。
+
+**2. 零客户端 JS**
+Server Component 的 JS 代码不会打包到客户端 bundle 中，这显著减小了客户端体积。
+
+**3. 组件树混合**
+React 19+ 支持在同一个组件树中混合 Server 和 Client Component：
+
+- <strong>Server Component</strong>：不能使用 state、effects 或事件处理器，但可以直接访问数据库和文件系统
+- <strong>Client Component</strong>：加上 \`'use client'\` 指令，拥有完整的交互能力
+
+**4. 序列化边界**
+Server → Client 的数据传递通过可序列化的 props 完成。Server Component 可以渲染 Client Component 并传 props 给它，但反过来不行。
+
+核心优势：更快的首屏加载、更小的 JS 体积、直接访问后端资源。`,
+
+      api: `REST API 设计规范建议：
+
+**URL 设计**
+- 使用名词复数：\`/api/users\`、\`/api/articles\`
+- 嵌套关系：\`/api/users/{id}/articles\`
+- 避免动词：用 HTTP 方法表达操作
+
+**HTTP 方法**
+| 方法 | 操作 | 幂等 |
+|------|------|------|
+| GET | 查询 | 是 |
+| POST | 创建 | 否 |
+| PUT | 全量更新 | 是 |
+| PATCH | 部分更新 | 否 |
+| DELETE | 删除 | 是 |
+
+**响应格式**
+\`\`\`json
+{
+  "code": 0,
+  "message": "success",
+  "data": { ... },
+  "meta": { "page": 1, "total": 100 }
+}
+\`\`\`
+
+**关键原则**：版本化（\`/v1/...\`）、分页、错误码统一、认证用 Bearer Token、限流 Header 明确告知。需要我展开某个具体部分吗？`,
+
+      vue: `Vue 3 与 React 19 的主要差异：
+
+<strong>响应式系统</strong>
+- Vue 3: Proxy-based 自动追踪，\`ref()\` / \`reactive()\`，修改即触发更新
+- React 19: 不可变数据 + \`setState\`，显式调用更新
+
+<strong>模板 vs JSX</strong>
+- Vue: SFC 单文件组件，template + script + style
+- React: JSX + 组件函数，CSS-in-JS 或 CSS Modules
+
+<strong>编译时优化</strong>
+- Vue 3: 编译器分析模板，自动标记静态节点（patch flag）
+- React 19: React Compiler（自动 memo）
+
+<strong>组合方式</strong>
+- Vue 3: Composition API（\`setup\`），\`composables\`
+- React 19: Hooks，自定义 Hook
+
+<strong>生态差异</strong>
+- Vue: Pinia（状态）、Vue Router、Vite 原生支持
+- React: Zustand/Redux、React Router、Next.js/Remix
+
+两者都在持续进化，选择更多取决于团队技术栈和项目需求。`,
+
+      default: `好的，这个问题涉及几个方面：
+
+1. **分析现状**：先梳理当前的需求和约束条件
+2. **方案对比**：比较几种可行的技术方案
+3. **实施建议**：给出推荐的实施路径和注意事项
+
+具体来说，我建议先从最小可行方案开始，快速验证核心假设，然后根据反馈迭代。要不要我帮你做个具体的方案设计？关键是把目标、步骤和预期产出拆清楚。`
+    };
+
+    function pickResponse(text) {
+      const t = text.toLowerCase();
+      if (t.includes('python') || t.includes('数据分析') || t.includes('脚本')) return 'python';
+      if (t.includes('react') || t.includes('rsc') || t.includes('server component')) return 'rsc';
+      if (t.includes('api') || t.includes('rest') || t.includes('接口')) return 'api';
+      if (t.includes('vue') || t.includes('react19') || t.includes('比较')) return 'vue';
+      return 'default';
+    }
+
+    async function simulateResponse(text) {
+      const key = pickResponse(text);
+      const full = responses[key];
+
+      // Remove loading indicator
+      const tempDiv = messages.querySelector('[data-temp="1"]');
+      if (tempDiv) tempDiv.remove();
+
+      // Create response bubble
+      const div = document.createElement('div');
+      div.className = 'msg assistant';
+      div.innerHTML = `<div class="avatar av-ai">W</div><div class="body"><div class="bubble" id="stream-target-${Date.now()}"></div><div class="time">刚刚</div></div>`;
+      messages.appendChild(div);
+      const bubble = div.querySelector('.bubble');
+
+      // Streaming effect
+      const parseStream = parseHTMLStream(full);
+      let current = '';
+      for (const chunk of parseStream) {
+        await sleep(18 + Math.random() * 10);
+        current += chunk;
+        bubble.innerHTML = current;
+        messages.scrollTop = messages.scrollHeight;
+        messagesWrap.scrollTop = messagesWrap.scrollHeight;
+      }
+
+      state.isResponding = false;
+      sendBtn.disabled = userInput.value.trim() === '';
+      userInput.focus();
+    }
+
+    function* parseHTMLStream(html) {
+      const regex = /<[^>]+>|[^<]+/g;
+      let match;
+      while ((match = regex.exec(html)) !== null) {
+        yield match[0];
+      }
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    /* ==========================================================
+       Conversations
+       ========================================================== */
+    function newConversation() {
+      state.convCount++;
+      const id = `conv-${state.convCount}`;
+      state.conversations.push({ id, title: '新对话', messages: [] });
+      state.activeConv = id;
+      refreshConvList();
+      resetChat();
+      navigateTo('chat');
+    }
+
+    function resetChat() {
+      messages.innerHTML = '';
+      showWelcome(true);
+      userInput.value = '';
+      sendBtn.disabled = true;
+      state.isResponding = false;
+    }
+
+    function switchConversation(convId) {
+      state.activeConv = convId;
+      resetChat();
+      refreshConvList();
+    }
+
+    function refreshConvList() {
+      const list = document.getElementById('conv-list');
+      list.innerHTML = state.conversations.map(c =>
+        `<div class="sidebar-item${c.id === state.activeConv ? ' active' : ''}" data-conv="${c.id}" onclick="switchConversation('${c.id}')">
+          <span class="dot${c.title === '新对话' ? ' muted' : ''}"></span>${escapeHtml(c.title)}
+        </div>`
+      ).join('');
+    }
+
+    function exportChat() {
+      const msgs = document.querySelectorAll('#messages .msg');
+      let txt = '';
+      msgs.forEach(m => {
+        const role = m.classList.contains('user') ? '用户' : 'WorkBuddy';
+        const content = m.querySelector('.bubble')?.innerText || '';
+        txt += `\n### ${role}\n${content}\n`;
+      });
+      const blob = new Blob([txt], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'workbuddy-chat.txt';
+      a.click();
+    }
+
+    /* ==========================================================
+       Init
+       ========================================================== */
+    userInput.focus();
+  </script>
+</body>
+</html>

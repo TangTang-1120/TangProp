@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tangprop.backend</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/tangtang/Desktop/2026-07-29-09-06-35/workbuddy-backend/start-backend.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/tangtang/Desktop/2026-07-29-09-06-35/workbuddy-backend</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>8080</string>
+        <key>HOME</key>
+        <string>/Users/tangtang</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HTTP_PROXY</key>
+        <string></string>
+        <key>HTTPS_PROXY</key>
+        <string></string>
+        <key>ALL_PROXY</key>
+        <string></string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/tangprop_backend.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/tangprop_backend_err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
