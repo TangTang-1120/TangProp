@@ -42,6 +42,14 @@ let API;
   }
 })();
 
+function apiMissingHint() {
+  if (API) return '';
+  if (/\.github\.io$/i.test(location.hostname)) {
+    return '当前为 GitHub Pages 静态站，没有后端，无法收发验证码。请改用本机 http://localhost:8080/ ，或在地址后加 ?api=后端地址';
+  }
+  return '无法连接服务器，请确认后端已启动';
+}
+
 // 统一 fetch 封装：网络错误时给友好提示
 async function apiFetch(url, options = {}) {
   try {
@@ -300,6 +308,11 @@ async function sendEmailVerifyCode() {
   if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email)) {
     err.textContent = '请输入有效的邮箱地址'; return;
   }
+  if (!API && /\.github\.io$/i.test(location.hostname)) {
+    err.style.color = '';
+    err.textContent = apiMissingHint();
+    return;
+  }
   err.textContent = '';
   btn.disabled = true; btn.textContent = '发送中...';
   try {
@@ -328,7 +341,7 @@ async function sendEmailVerifyCode() {
   } catch (e) {
     btn.disabled = false; btn.textContent = '获取验证码';
     err.style.color = '';
-    err.textContent = e.message;
+    err.textContent = e.message || apiMissingHint() || '发送失败';
   }
 }
 
