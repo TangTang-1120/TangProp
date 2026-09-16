@@ -8,7 +8,18 @@ git remote add origin https://github.com/TangTang-1120/TangProp.git  # 若尚未
 git push -u origin main
 ```
 
-## 2. 自动部署到腾讯云（GitHub Actions）
+## 2. GitHub Pages（前端静态站）
+
+推送 `main` 后会执行 `.github/workflows/pages.yml`，站点地址：
+
+**https://tangtang-1120.github.io/TangProp/**
+
+首次启用：仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**。
+
+> Pages 只托管前端。聊天 / 生图等需后端时，可在地址后加 `?api=https://你的后端地址`，或在控制台执行：
+> `localStorage.setItem('TANGPROP_API','https://你的后端')` 后刷新。
+
+## 3. 自动部署到腾讯云（GitHub Actions，保留）
 
 在 GitHub 仓库 **Settings → Secrets and variables → Actions** 添加：
 
@@ -29,7 +40,7 @@ git push -u origin main
 
 **注意**：服务器上的 `/opt/tangprop/backend/.env` 需手动维护，不会被 Git 覆盖。
 
-## 3. 手动部署
+## 4. 手动部署腾讯云
 
 ```bash
 ./deploy/push-to-tencent.sh

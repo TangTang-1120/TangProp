@@ -3,10 +3,10 @@
 // TangProp — Frontend Logic
 // ============================================================
 
-// 子路径部署（/tangprop/）时修正静态资源路径
+// 子路径部署（/tangprop/ 或 GitHub Pages /TangProp/）时修正静态资源路径
 (function setupAssetBase() {
   if (location.protocol === 'file:') return;
-  const m = location.pathname.match(/^(.*\/tangprop\/)/);
+  const m = location.pathname.match(/^(.*\/(?:tangprop|TangProp)\/)/i);
   if (m) {
     const base = document.createElement('base');
     base.href = m[1];
@@ -14,16 +14,33 @@
   }
 })();
 
-// 自动检测 API 地址
+// 自动检测 API 地址（可用 ?api= 或 localStorage.TANGPROP_API 覆盖）
 let API;
-if (location.protocol === 'file:') {
-  API = 'http://localhost:8080';
-} else if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-  API = location.port === '8080' ? '' : 'http://localhost:8080';
-} else {
-  // 腾讯云 / 域名部署：走同源，由 Nginx 反代 /chat、/auth 等
-  API = '';
-}
+(function resolveApiBase() {
+  try {
+    const q = new URLSearchParams(location.search).get('api');
+    if (q) {
+      API = q.replace(/\/$/, '');
+      return;
+    }
+    const stored = localStorage.getItem('TANGPROP_API');
+    if (stored) {
+      API = stored.replace(/\/$/, '');
+      return;
+    }
+  } catch (_) {}
+  if (location.protocol === 'file:') {
+    API = 'http://localhost:8080';
+  } else if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    API = location.port === '8080' ? '' : 'http://localhost:8080';
+  } else if (/\.github\.io$/i.test(location.hostname)) {
+    // GitHub Pages 仅静态前端；未配置 API 时留空（请求会失败并提示）
+    API = '';
+  } else {
+    // 腾讯云 / 域名部署：走同源，由 Nginx 反代 /chat、/auth 等
+    API = '';
+  }
+})();
 
 // 统一 fetch 封装：网络错误时给友好提示
 async function apiFetch(url, options = {}) {
