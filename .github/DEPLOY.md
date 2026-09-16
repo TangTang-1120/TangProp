@@ -10,11 +10,13 @@ git push -u origin main
 
 ## 2. GitHub Pages（前端静态站）
 
-推送 `main` 后会执行 `.github/workflows/pages.yml`，站点地址：
+静态前端已推送到 `gh-pages` 分支，站点地址：
 
 **https://tangtang-1120.github.io/TangProp/**
 
-首次启用：仓库 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**。
+首次启用：仓库 **Settings → Pages → Build and deployment → Source** 选 **Deploy from a branch**，Branch 选 **`gh-pages` / `/ (root)`** 后 Save。
+
+（另有 `.github/workflows/pages.yml` 本地可用；当前 OAuth 缺 `workflow` 权限时改用分支部署。）
 
 > Pages 只托管前端。聊天 / 生图等需后端时，可在地址后加 `?api=https://你的后端地址`，或在控制台执行：
 > `localStorage.setItem('TANGPROP_API','https://你的后端')` 后刷新。
