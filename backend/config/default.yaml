@@ -24,7 +24,10 @@ models:
       api_key: ${ZHIPU_API_KEY}
       default_model: glm-4-flash
       models:
+        - glm-5.2
+        - "glm-5.2[1m]"
         - glm-4-flash
+        - glm-4v-flash
 
     siliconflow:
       display_name: 硅基流动
@@ -103,3 +106,14 @@ image:
         gen_model: zimage
         legacy_model: turbo
         free_without_key: true
+
+# ── Video Generation (Seedance 2.5) ──
+video:
+  default_provider: seedance
+  default_model: doubao-seedance-2-5-260628
+  default_duration: 5
+  default_ratio: "16:9"
+  default_resolution: 720p
+  api_base: https://ark.cn-beijing.volces.com/api/v3
+  api_key: ${SEEDANCE_API_KEY}
+  # 未设置 SEEDANCE_API_KEY 时回退 ARK_API_KEY / VOLCENGINE_API_KEY

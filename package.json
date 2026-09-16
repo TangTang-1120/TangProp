@@ -1,0 +1,24 @@
+{
+  "name": "tangprop",
+  "version": "1.0.0",
+  "description": "> 单页 AI 助手 + Agent 工作台（Workbench）。左对话 / 右浏览器实时预览，模型直接产出可运行的 HTML。",
+  "main": "_chk.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TangTang-1120/TangProp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/TangTang-1120/TangProp/issues"
+  },
+  "homepage": "https://github.com/TangTang-1120/TangProp#readme",
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}

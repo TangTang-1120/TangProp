@@ -49,11 +49,16 @@ logger = logging.getLogger(__name__)
 # "I'll search the web for..." hallucinated-plan pattern and force the
 # model to really invoke the tool on the next turn.
 _TOOL_PLAN_PATTERNS = [
-    r"我(将|会|要|打算|准备)\s*(使用|调用|进行|执行).{0,30}(search|搜索|fetch|抓取|查询|浏览)",
+    r"我(将|会|要|打算|准备)\s*(使用|调用|进行|执行).{0,30}(search|搜索|fetch|抓取|查询|浏览|查找)",
+    r"我(将|会|要|打算|准备).{0,12}(为您|帮你|给你)?(查找|查询|搜索|检索|了解一下)",
     r"(使用|调用)\s*(web_search|web_fetch)\s*工具",
-    r"let me (search|fetch|look up|use the tool)",
-    r"I('ll| will) (search|fetch|look up|use the tool)",
-    r"首先.{0,15}(搜索|查询|访问).{0,15}(然后|接着|再)",
+    r"(正在|先).{0,8}(为您|帮你)?(查找|查询|搜索|检索)",
+    r"请稍等|稍等一下|稍候|请等待|马上回来|我去查一下|让我查一下|让我搜索",
+    r"(我来|让我|我将|我会).{0,12}(直接)?(运行|执行|生成|绘制|画).{0,20}(图表|代码|可视化|示意图)",
+    r"(直接运行|开始生成|正在生成|这就生成).{0,16}(图表|代码|可视化)",
+    r"let me (search|fetch|look up|use the tool|generate|run|create).{0,20}(chart|plot|graph|code)",
+    r"I('ll| will) (search|fetch|look up|use the tool|generate|run|create).{0,20}(chart|plot|graph|code)",
+    r"首先.{0,15}(搜索|查询|访问|查找).{0,15}(然后|接着|再)",
     r"step\s*1[:：].{0,40}(step\s*2|todo)",
 ]
 
@@ -81,22 +86,106 @@ def _retry_attempt_count(text: str) -> int:
 _TOOL_PLAN_RE = re.compile("|".join(_TOOL_PLAN_PATTERNS), re.IGNORECASE)
 
 
-def _looks_like_tool_plan(text: str) -> bool:
-    """Return True if the model output describes a tool call in plain
-    text without actually emitting a function_call."""
+_ANSWER_NOW_NUDGE = (
+    "停止计划与空话。不要再说「请稍等」「我将查找」「我来生成」。"
+    "不要再调用任何工具。"
+    "请立即基于你已有知识，直接给出完整、具体、可阅读的最终答案。"
+    "若信息可能不是最新的，在开头用一句话注明即可。"
+)
+
+_CHART_NUDGE = (
+    "用户要的是可直接查看的图表，不是计划也不是承诺。"
+    "禁止只回复「我来生成图表/我来运行代码」。"
+    "请立刻输出完整可渲染内容，优先顺序："
+    "1) 纯 SVG 图表（最推荐，便于保存图片）；"
+    "2) ```html 完整 HTML，用纯 SVG/CSS 画图，尽量不要依赖 Chart.js 等外部 CDN；"
+    "3) ```mermaid。"
+    "可用示意数据，开头注明「示意数据，非实时行情」。不要调用工具。"
+)
+
+
+def _has_deliverable_artifact(text: str) -> bool:
     if not text:
         return False
-    # Short "planning" text + presence of tool name in natural language
+    lower = text.lower()
+    if "```html" in lower or "```svg" in lower or "```mermaid" in lower:
+        return True
+    if "<svg" in lower or "<!doctype html" in lower or "<canvas" in lower:
+        return True
+    if re.search(r"```(?:javascript|js|python|py)\n.{80,}", text, re.I | re.S):
+        return True
+    return False
+
+
+def _looks_like_wait_only(text: str) -> bool:
+    """短回复几乎只有「稍等/去查/去生成」，没有实质内容。"""
+    if not text:
+        return False
+    stripped = text.strip()
+    if len(stripped) > 180:
+        return False
+    if _has_deliverable_artifact(stripped):
+        return False
+    if re.search(
+        r"(稍等|稍候|查找|查询|搜索|检索|去查|了解一下|为您查找|"
+        r"我来.{0,10}(运行|生成|绘制)|直接运行|生成图表|生成.*代码)",
+        stripped,
+    ):
+        substance = (
+            "股价", "市值", "营收", "结论", "建议", "具体", "目前", "约为",
+            "根据", "如下", "%", "元", "美元", "港股", "代码", "上市", "分析",
+            "```", "<svg", "<html",
+        )
+        return not any(s in stripped for s in substance)
+    return False
+
+
+def _looks_like_empty_promise(text: str) -> bool:
+    """模型只说「我来生成/运行…」却没有真正交付内容。"""
+    if not text:
+        return False
+    stripped = text.strip()
+    if _has_deliverable_artifact(stripped):
+        return False
+    if len(stripped) > 220:
+        # 长文若仍几乎全是计划句、没有交付物，也视为空承诺
+        if not re.search(r"(我来|让我|我将|直接运行|生成图表|运行代码)", stripped):
+            return False
+        body = re.sub(
+            r"(我来|让我|我将|我会).{0,20}(运行|执行|生成|绘制).{0,30}(图表|代码|可视化)",
+            "",
+            stripped,
+        )
+        return len(body.strip()) < 40
+    return bool(_TOOL_PLAN_RE.search(stripped)) or _looks_like_wait_only(stripped)
+
+
+def _looks_like_tool_plan(text: str) -> bool:
+    """Return True if the model output describes a tool call / future action
+    in plain text without actually delivering an answer or artifact."""
+    if not text:
+        return False
+    if _has_deliverable_artifact(text):
+        return False
     if _TOOL_PLAN_RE.search(text):
         return True
-    # Heuristic: if text mentions a known tool name but doesn't end with
-    # a real answer, treat it as a plan
     tool_names = ("web_search", "web_fetch", "bash", "grep", "glob")
     if any(name in text for name in tool_names) and len(text) < 800:
-        # Check if the text is mostly a "plan" rather than actual results
         result_markers = ("结果", "答案是", "根据", "据", "结论", "综上", "result", "according to", "answer:")
         if not any(m in text.lower() for m in result_markers):
             return True
+    if _looks_like_empty_promise(text):
+        return True
+    return False
+
+
+def _conversation_wants_chart(messages: List[Any]) -> bool:
+    for m in reversed(messages or []):
+        role = getattr(m, "role", None)
+        content = getattr(m, "content", None) or ""
+        if role == Role.USER and content:
+            if re.search(r"图表|圖表|可视化|示意(图|圖)|画(一|张|个)?图|走势图|K线|柱状|折线|chart|plot|graph", content, re.I):
+                return True
     return False
 
 
@@ -212,6 +301,7 @@ class AgentLoop:
         config: AgentConfig,
         model: Optional[str] = None,
         images: Optional[List[str]] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
     ):
         self.provider = provider
         self.tools = tools
@@ -219,12 +309,35 @@ class AgentLoop:
         self.config = config
         self._model = model
         self._images = images or []
+        self._history = history or []
 
         # Runtime state
         self._messages: List[Message] = []
         self._steps: List[AgentStep] = []
         self._status: AgentStatus = AgentStatus.IDLE
         self._turn_count: int = 0
+
+    def _seed_messages(self, user_message: str, system_content: str) -> None:
+        """Initialize conversation with system + prior turns + current user message."""
+        self._messages = [Message(role=Role.SYSTEM, content=system_content)]
+        for item in self._history[-20:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "").lower()
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user":
+                self._messages.append(Message(role=Role.USER, content=content[:8000]))
+            elif role == "assistant":
+                self._messages.append(Message(role=Role.ASSISTANT, content=content[:8000]))
+        self._messages.append(
+            Message(
+                role=Role.USER,
+                content=user_message,
+                images=self._images if self._images else None,
+            )
+        )
 
     # ── Public API ──────────────────────────────────────────
 
@@ -252,11 +365,8 @@ class AgentLoop:
         if mem_ctx.to_prompt_text():
             system_content += "\n\n" + mem_ctx.to_prompt_text()
 
-        # Initialize message list
-        self._messages = [
-            Message(role=Role.SYSTEM, content=system_content),
-            Message(role=Role.USER, content=user_message, images=self._images if self._images else None),
-        ]
+        # Initialize message list (system + prior turns + current user)
+        self._seed_messages(user_message, system_content)
 
         tool_defs = [] if self.config.disable_tools else self.tools.get_definitions()
 
@@ -367,26 +477,20 @@ class AgentLoop:
                 continue
 
             # ── Check for hallucinated tool plan (model says it'll use a tool but didn't) ──
-            if tool_defs and response.is_text and _looks_like_tool_plan(response.content or ""):
+            # ── Check for hallucinated tool plan (model says it'll use a tool but didn't) ──
+            if response.is_text and _looks_like_tool_plan(response.content or ""):
                 logger.info(
-                    f"Turn {self._turn_count}: model declared tool usage "
-                    "without emitting a tool_call — pushing back for real call"
+                    f"Turn {self._turn_count}: wait/plan without answer — forcing direct answer"
                 )
-                self._messages.append(Message(
-                    role=Role.USER,
-                    content=(
-                        "你刚才说要调用工具，但实际并没有发出工具调用。"
-                        "请立即在下一轮中真正调用工具（发出 function_call 结构），"
-                        "不要再用文字描述计划。如果你已经有足够的信息回答，"
-                        "请直接给出完整答案。"
-                    ),
-                ))
+                self._messages.append(Message(role=Role.ASSISTANT, content=response.content or ""))
+                self._messages.append(Message(role=Role.USER, content=self._pick_nudge()))
+                stalled = True
                 self._steps.append(AgentStep(
                     step_num=self._turn_count,
                     status=AgentStatus.THINKING,
                     model_response=response,
                 ))
-                continue
+                break
 
             # Fallback: real final answer
             self._status = AgentStatus.DONE
@@ -444,13 +548,14 @@ class AgentLoop:
         if mem_ctx.to_prompt_text():
             system_content += "\n\n" + mem_ctx.to_prompt_text()
 
-        self._messages = [
-            Message(role=Role.SYSTEM, content=system_content),
-            Message(role=Role.USER, content=user_message, images=self._images if self._images else None),
-        ]
+        self._seed_messages(user_message, system_content)
 
         tool_defs = [] if self.config.disable_tools else self.tools.get_definitions()
-        logger.info(f"run_stream start: model={self._effective_model()} tools={[t.name for t in tool_defs]}")
+        logger.info(
+            f"run_stream start: model={self._effective_model()} "
+            f"history={len(self._history)} msgs={len(self._messages)} "
+            f"tools={[t.name for t in tool_defs]}"
+        )
 
         # ── Stall detection state ──
         result_fingerprints: List[str] = []
@@ -518,8 +623,14 @@ class AgentLoop:
                 # Assemble streamed tool call deltas into a single ChatResponse
                 tool_calls = _assemble_tool_call_deltas(tool_call_deltas)
                 if tool_calls:
+                    # 工具执行前不要发 text_end，否则前端会误以为整轮结束、无法追问
                     if streamed:
-                        yield json.dumps({"type": "text_end"}) + "\n"
+                        yield json.dumps({
+                            "type": "status",
+                            "status": "thinking",
+                            "turn": self._turn_count,
+                            "note": "正在调用工具…",
+                        }) + "\n"
 
                     # If there was also "thinking" text, keep it as a previous-step
                     # assistant message so the tool result can be processed next.
@@ -550,13 +661,19 @@ class AgentLoop:
                         stalled = True
 
                     if stalled:
+                        if full_text and (
+                            _looks_like_empty_promise(full_text) or _looks_like_tool_plan(full_text)
+                        ):
+                            yield json.dumps({"type": "text_reset"}) + "\n"
+                            yield json.dumps({
+                                "type": "status",
+                                "status": "thinking",
+                                "turn": self._turn_count,
+                                "note": "正在生成图表…",
+                            }) + "\n"
                         self._messages.append(Message(
                             role=Role.USER,
-                            content=(
-                                "工具调用已经重复多次但没有获得有用的新信息。请基于现有结果和"
-                                "你自己的知识给出最终答复，不要再调用工具。"
-                                "如果信息可能不是最新的，请明确告知用户。"
-                            ),
+                            content=self._pick_nudge(),
                         ))
 
                     for tc, tr in zip(tool_calls, tool_results):
@@ -598,45 +715,32 @@ class AgentLoop:
                 # If tools are available and the model said it would use one but
                 # didn't actually emit a tool_call, treat this as incomplete and
                 # push the model back into the loop with a strict instruction.
-                if tool_defs and (
+                if (
                     _looks_like_tool_plan(full_text) or _is_self_talk_loop(full_text)
                 ) and self._turn_count < self.config.max_turns:
-                    if _is_self_talk_loop(full_text):
-                        logger.info(
-                            f"Turn {self._turn_count}: model stuck in self-talk loop "
-                            f"({_retry_attempt_count(full_text)} retry phrases) — "
-                            "forcing synthesis instead"
-                        )
-                        stalled = True
-                        if streamed:
-                            yield json.dumps({"type": "text_end"}) + "\n"
-                        # Don't push back — go straight to synthesis
-                        break
                     logger.info(
-                        f"Turn {self._turn_count}: model declared tool usage "
-                        "without emitting a tool_call — pushing back for real call"
+                        f"Turn {self._turn_count}: wait/plan or self-talk "
+                        f"(retries={_retry_attempt_count(full_text)}) — forcing direct answer"
                     )
+                    # 清掉前端已显示的空话，马上进入直接作答
                     if streamed:
-                        yield json.dumps({"type": "text_end"}) + "\n"
+                        yield json.dumps({"type": "text_reset"}) + "\n"
+                        yield json.dumps({
+                            "type": "status",
+                            "status": "thinking",
+                            "turn": self._turn_count,
+                            "note": "正在作答…",
+                        }) + "\n"
 
-                    # Persist the "plan" text as assistant message
                     self._messages.append(Message(role=Role.ASSISTANT, content=full_text))
-
-                    # Push back: demand an actual tool call next turn
-                    self._messages.append(Message(
-                        role=Role.USER,
-                        content=(
-                            "你刚才说要调用工具，但实际并没有发出工具调用。"
-                            "请立即在下一轮中真正调用工具（发出 function_call 结构），"
-                            "不要再用文字描述计划。"
-                        ),
-                    ))
+                    self._messages.append(Message(role=Role.USER, content=self._pick_nudge()))
+                    stalled = True
                     self._steps.append(AgentStep(
                         step_num=self._turn_count,
                         status=AgentStatus.THINKING,
                         model_response=ChatResponse(content=full_text, model=self._effective_model() or ""),
                     ))
-                    continue  # Force another turn
+                    break  # 直接走 synthesis，不再空转工具
 
                 # Otherwise: real final answer → done
                 if streamed:
@@ -708,37 +812,28 @@ class AgentLoop:
                     break  # exit the loop, run final synthesis
 
                 # Same anti-hallucinated-plan check, this time on the non-stream path
-                if tool_defs and _looks_like_tool_plan(response.content or "") and self._turn_count < self.config.max_turns:
+                if _looks_like_tool_plan(response.content or "") and self._turn_count < self.config.max_turns:
                     logger.info(
-                        f"Turn {self._turn_count}: non-stream model declared tool usage "
-                        "without tool_call — pushing back for real call"
+                        f"Turn {self._turn_count}: non-stream wait/plan — forcing direct answer"
                     )
-                    yield json.dumps({"type": "text_start"}) + "\n"
-                    text = response.content or ""
-                    words = text.split(" ")
-                    chunk_size = 8
-                    for i in range(0, len(words), chunk_size):
-                        chunk = " ".join(words[i:i + chunk_size])
-                        if i + chunk_size < len(words):
-                            chunk += " "
-                        yield json.dumps({"type": "text", "content": chunk}) + "\n"
-                        await asyncio.sleep(0)
-                    yield json.dumps({"type": "text_end"}) + "\n"
+                    # 不要把空承诺推给用户，直接进入综合作答
+                    yield json.dumps({"type": "text_reset"}) + "\n"
+                    yield json.dumps({
+                        "type": "status",
+                        "status": "thinking",
+                        "turn": self._turn_count,
+                        "note": "正在作答…",
+                    }) + "\n"
 
-                    self._messages.append(Message(
-                        role=Role.USER,
-                        content=(
-                            "你刚才说要调用工具，但实际并没有发出工具调用。"
-                            "请立即在下一轮中真正调用工具（发出 function_call 结构），"
-                            "不要再用文字描述计划。"
-                        ),
-                    ))
+                    self._messages.append(Message(role=Role.ASSISTANT, content=response.content or ""))
+                    self._messages.append(Message(role=Role.USER, content=self._pick_nudge()))
+                    stalled = True
                     self._steps.append(AgentStep(
                         step_num=self._turn_count,
                         status=AgentStatus.THINKING,
                         model_response=response,
                     ))
-                    continue
+                    break
 
                 # Real final answer
                 yield json.dumps({"type": "text_start"}) + "\n"
@@ -795,11 +890,7 @@ class AgentLoop:
                 if stalled:
                     self._messages.append(Message(
                         role=Role.USER,
-                        content=(
-                            "工具调用已经重复多次但没有获得有用的新信息。请基于现有结果和"
-                            "你自己的知识给出最终答复，不要再调用工具。"
-                            "如果信息可能不是最新的，请明确告知用户。"
-                        ),
+                        content=self._pick_nudge(),
                     ))
                     break  # exit the loop, run final synthesis
 
@@ -836,14 +927,14 @@ class AgentLoop:
         # ── Post-loop synthesis: loop ended without a streamed final answer ──
         if not streamed_final:
             if not stalled:
-                self._messages.append(Message(
-                    role=Role.USER,
-                    content=(
-                        "请直接基于现有信息和你的知识给出完整答复，不要再调用任何工具。"
-                        "如果缺少实时数据，请明确说明并仍给出尽可能完整的分析。"
-                    ),
-                ))
+                self._messages.append(Message(role=Role.USER, content=self._pick_nudge()))
             try:
+                yield json.dumps({
+                    "type": "status",
+                    "status": "thinking",
+                    "turn": self._turn_count,
+                    "note": "正在生成完整回答…",
+                }) + "\n"
                 synthesis = await self.provider.chat(
                     messages=self._build_synthesis_messages(),
                     tools=None,
@@ -851,15 +942,25 @@ class AgentLoop:
                     temperature=self.config.temperature,
                     max_tokens=self.config.max_tokens,
                 )
-                if synthesis.is_text and synthesis.content:
+                # 若仍是空承诺，再强制一次图表/答案交付
+                if synthesis.is_text and _looks_like_empty_promise(synthesis.content or ""):
+                    logger.info("Synthesis still empty promise — retrying with stronger nudge")
+                    retry_msgs = self._build_synthesis_messages()
+                    retry_msgs.append(Message(role=Role.USER, content=self._pick_nudge()))
+                    synthesis = await self.provider.chat(
+                        messages=retry_msgs,
+                        tools=None,
+                        model=self._effective_model(),
+                        temperature=0.4,
+                        max_tokens=self.config.max_tokens,
+                    )
+                if synthesis.is_text and synthesis.content and not _looks_like_empty_promise(synthesis.content):
                     yield json.dumps({"type": "text_start"}) + "\n"
                     text = synthesis.content
-                    words = text.split(" ")
-                    chunk_size = 12
-                    for i in range(0, len(words), chunk_size):
-                        chunk = " ".join(words[i:i + chunk_size])
-                        if i + chunk_size < len(words):
-                            chunk += " "
+                    # 中文友好：按字符块推送，避免整段卡住
+                    chunk_size = 48
+                    for i in range(0, len(text), chunk_size):
+                        chunk = text[i:i + chunk_size]
                         yield json.dumps({"type": "text", "content": chunk}) + "\n"
                         await asyncio.sleep(0)
                     yield json.dumps({"type": "text_end"}) + "\n"
@@ -871,6 +972,15 @@ class AgentLoop:
                         f"Completed in {self._turn_count} turns (synthesized after incomplete loop)"
                     )
                     return
+                if synthesis.is_text and synthesis.content:
+                    # 最后兜底：即使仍偏短，也输出，避免前端空白
+                    yield json.dumps({"type": "text_reset"}) + "\n"
+                    yield json.dumps({"type": "text_start"}) + "\n"
+                    yield json.dumps({"type": "text", "content": synthesis.content}) + "\n"
+                    yield json.dumps({"type": "text_end"}) + "\n"
+                    self._messages.append(Message(role=Role.ASSISTANT, content=synthesis.content))
+                    self._status = AgentStatus.DONE
+                    return
             except Exception as e:
                 logger.warning(f"Synthesis call failed: {e}")
 
@@ -878,22 +988,41 @@ class AgentLoop:
 
     # ── Internal ────────────────────────────────────────────
 
+    def _pick_nudge(self) -> str:
+        if _conversation_wants_chart(self._messages):
+            return _CHART_NUDGE
+        return _ANSWER_NOW_NUDGE
+
     def _build_synthesis_messages(self) -> List[Message]:
         """Build a clean context for final synthesis — avoids broken tool-call chains."""
         msgs: List[Message] = []
         if self._messages and self._messages[0].role == Role.SYSTEM:
             msgs.append(self._messages[0])
-        for m in self._messages:
-            if m.role == Role.USER and m.content and not m.content.startswith("工具调用已经") and not m.content.startswith("请直接基于"):
-                msgs.append(m)
-                break
-        msgs.append(Message(
-            role=Role.USER,
-            content=(
-                "请直接基于你的知识回答上面的问题，给出完整、有条理的分析。"
-                "不要调用任何工具。若缺少实时数据，请说明情况，并仍给出尽可能完整的回答。"
-            ),
-        ))
+        nudge_prefixes = (
+            "工具调用已经",
+            "请直接基于",
+            "停止计划与空话",
+            "你刚才只说了",
+            "你刚才说要调用",
+            "用户要的是可直接查看的图表",
+        )
+        for m in self._messages[1:]:
+            if m.role not in (Role.USER, Role.ASSISTANT):
+                continue
+            content = (m.content or "").strip()
+            if not content:
+                continue
+            if m.role == Role.USER and any(content.startswith(p) for p in nudge_prefixes):
+                continue
+            if m.role == Role.ASSISTANT and (
+                _looks_like_wait_only(content) or _looks_like_empty_promise(content)
+            ):
+                continue
+            msgs.append(Message(role=m.role, content=content[:6000]))
+        msgs.append(Message(role=Role.USER, content=self._pick_nudge()))
+        # 保留 system + 最近若干轮
+        if len(msgs) > 14:
+            msgs = [msgs[0]] + msgs[-13:]
         return msgs
 
     def _resolve_model_name(self) -> Optional[str]:

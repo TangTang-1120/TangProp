@@ -15,15 +15,19 @@ import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import uvicorn
 import yaml
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import base64
+import re
+import time
+import uuid
 
 from models.adapter import (
     ModelRegistry,
@@ -188,6 +192,10 @@ class ChatRequest(BaseModel):
     images: Optional[List[str]] = Field(None, description="Base64-encoded images (data URLs)")
     system_context: Optional[str] = Field(None, description="Extra system instructions (e.g. expert persona)")
     expert_prefill: Optional[str] = Field(None, description="Assistant prefill to force structured expert openings")
+    history: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="Prior conversation turns [{role, content}, ...] excluding the current message",
+    )
 
 
 def _build_system_prompt(base: str, extra: Optional[str]) -> str:
@@ -275,9 +283,15 @@ async def chat(req: ChatRequest):
         memory=state.memory,
         config=agent_config,
         model=req.model,
+        images=req.images,
+        history=req.history,
     )
 
-    logger.info(f"Chat request: '{req.message[:80]}...'")
+    logger.info(
+        "Chat request: '%s...' images=%d",
+        (req.message or "")[:80],
+        len(req.images or []),
+    )
     response = await agent.run(req.message)
 
     return ChatResponse(
@@ -334,7 +348,11 @@ async def _stream_expert_direct(provider, model, req: ChatRequest):
     system = _build_system_prompt(state.system_prompt, req.system_context)
     messages = [
         Message(role=Role.SYSTEM, content=system),
-        Message(role=Role.USER, content=req.message),
+        Message(
+            role=Role.USER,
+            content=req.message or ("请分析这张图片" if req.images else ""),
+            images=req.images if req.images else None,
+        ),
     ]
     if req.expert_prefill and req.expert_prefill.strip():
         messages.append(Message(role=Role.ASSISTANT, content=req.expert_prefill.strip()))
@@ -386,12 +404,28 @@ async def chat_stream(req: ChatRequest):
             memory=state.memory,
             config=agent_config,
             model=model,
+            images=req.images,
+            history=req.history,
         )
 
     candidates = _chat_provider_candidates(req)
 
     async def generate():
         last_error = "模型请求失败"
+        user_message = (req.message or "").strip() or (
+            "请仔细查看图片并描述内容，回答用户问题。" if req.images else ""
+        )
+        if not user_message and not req.images:
+            yield json.dumps({"type": "error", "message": "消息不能为空"}) + "\n"
+            return
+        logger.info(
+            "chat/stream message_len=%d history=%d images=%d provider=%s model=%s",
+            len(user_message),
+            len(req.history or []),
+            len(req.images or []),
+            req.provider,
+            req.model,
+        )
         for idx, (provider, model, label) in enumerate(candidates):
             if idx > 0:
                 yield json.dumps({
@@ -405,7 +439,7 @@ async def chat_stream(req: ChatRequest):
             stream_failed = False
             try:
                 stream_fn = _stream_expert_direct if expert_mode else agent.run_stream
-                stream_args = (provider, model, req) if expert_mode else (req.message,)
+                stream_args = (provider, model, req) if expert_mode else (user_message,)
                 async for chunk in stream_fn(*stream_args):
                     try:
                         ev = json.loads(chunk.strip())
@@ -1225,6 +1259,10 @@ class ImageGenerateRequest(BaseModel):
     prompt: str = Field(..., description="Image generation prompt")
     model: Optional[str] = Field(None, description="Pollinations model: flux (default) or turbo")
     image_size: str = Field("1024x1024", description="Image size: 1024x1024, 1280x720, 768x1024")
+    images: Optional[List[str]] = Field(
+        None,
+        description="参考图 data URL / URL 列表（图生图 / 转插画），仅豆包 Seedream 使用",
+    )
 
 
 class ImageGenerateResponse(BaseModel):
@@ -1327,8 +1365,13 @@ def _doubao_model_id(model_key: str) -> str:
     return DOUBAO_MODEL_MAP.get(model_key, DOUBAO_DEFAULT_ENDPOINT)
 
 
-async def _call_doubao_image(prompt: str, size: str, model_key: str) -> ImageGenerateResponse:
-    """调用豆包 Seedream 文生图。DOUBAO_IMG_ENDPOINT 可为 ep-xxx 或模型 ID。"""
+async def _call_doubao_image(
+    prompt: str,
+    size: str,
+    model_key: str,
+    ref_images: Optional[List[str]] = None,
+) -> ImageGenerateResponse:
+    """调用豆包 Seedream 文生图 / 图生图（转插画）。"""
     if not DOUBAO_DEFAULT_ENDPOINT:
         return ImageGenerateResponse(
             success=False, model=model_key, provider="doubao",
@@ -1343,15 +1386,28 @@ async def _call_doubao_image(prompt: str, size: str, model_key: str) -> ImageGen
         "Authorization": f"Bearer {_volcengine_api_key()}",
         "Content-Type": "application/json",
     }
-    payload = {
+    payload: Dict[str, Any] = {
         "model": _doubao_model_id(model_key),
         "prompt": prompt,
         "size": size,
         "response_format": "url",
         "seed": -1,
+        "watermark": False,
     }
+    # Seedream 4 支持 image 字段做参考图 / 图生图
+    cleaned_refs = []
+    for img in (ref_images or [])[:4]:
+        if not img or not isinstance(img, str):
+            continue
+        s = img.strip()
+        if s.startswith("data:image/") or s.startswith("http://") or s.startswith("https://"):
+            cleaned_refs.append(s)
+    if cleaned_refs:
+        # 单张用字符串，多张用数组（兼容方舟文档）
+        payload["image"] = cleaned_refs[0] if len(cleaned_refs) == 1 else cleaned_refs
+        logger.info("Doubao image-to-image refs=%d prompt_len=%d", len(cleaned_refs), len(prompt))
     try:
-        status, data = await _post_json_with_fallback(DOUBAO_IMG_BASE, headers, payload)
+        status, data = await _post_json_with_fallback(DOUBAO_IMG_BASE, headers, payload, timeout=120.0)
         if status != 200:
             err = data.get("error", data)
             err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
@@ -1477,8 +1533,11 @@ async def generate_image(req: ImageGenerateRequest):
     prompt = req.prompt.strip()
 
     if model.startswith("doubao:"):
-        result = await _call_doubao_image(prompt, size, model)
+        result = await _call_doubao_image(prompt, size, model, ref_images=req.images)
         if result.success:
+            return result
+        # 有参考图时不要静默回退文生图（会丢掉参考内容）；直接返回错误
+        if req.images:
             return result
         logger.info(f"豆包生图失败 ({result.error})，回退 Pollinations flux")
         img_url, resolved_model, _ = await _resolve_pollinations_image(prompt, w, h, "flux")
@@ -1490,6 +1549,13 @@ async def generate_image(req: ImageGenerateRequest):
             error=f"豆包暂不可用，已自动改用免费 Flux",
         )
 
+    if req.images:
+        return ImageGenerateResponse(
+            success=False,
+            model=model,
+            error="当前免费模型不支持参考图转插画，请选择「豆包 Seedream」生图模型",
+        )
+
     img_url, resolved_model, provider = await _resolve_pollinations_image(prompt, w, h, model)
     return ImageGenerateResponse(
         success=True,
@@ -1497,6 +1563,188 @@ async def generate_image(req: ImageGenerateRequest):
         model=resolved_model,
         provider=provider,
     )
+
+
+# ============================================================
+# Video Generation — Seedance 2.5（火山方舟）
+# ============================================================
+
+SEEDANCE_API_BASE = os.environ.get(
+    "SEEDANCE_API_BASE", "https://ark.cn-beijing.volces.com/api/v3"
+)
+SEEDANCE_MODEL = os.environ.get("SEEDANCE_MODEL", "doubao-seedance-2-5-260628")
+SEEDANCE_DEFAULT_DURATION = int(os.environ.get("SEEDANCE_DEFAULT_DURATION", "5"))
+SEEDANCE_DEFAULT_RATIO = os.environ.get("SEEDANCE_DEFAULT_RATIO", "16:9")
+SEEDANCE_DEFAULT_RESOLUTION = os.environ.get("SEEDANCE_DEFAULT_RESOLUTION", "720p")
+
+
+def _seedance_api_key() -> str:
+    return (
+        os.environ.get("SEEDANCE_API_KEY")
+        or os.environ.get("ARK_API_KEY")
+        or os.environ.get("VOLCENGINE_API_KEY")
+        or ""
+    )
+
+
+def _seedance_configured() -> bool:
+    return bool(_seedance_api_key() and SEEDANCE_MODEL)
+
+
+class VideoGenerateRequest(BaseModel):
+    prompt: str = Field(..., description="视频描述")
+    model: Optional[str] = None
+    duration: Optional[int] = Field(None, ge=2, le=30)
+    ratio: Optional[str] = None  # 16:9 / 9:16 / 1:1
+    resolution: Optional[str] = None  # 720p / 1080p
+    images: Optional[list[str]] = None  # 参考图 data URL / http URL
+    generate_audio: Optional[bool] = True
+
+
+class VideoGenerateResponse(BaseModel):
+    success: bool
+    task_id: Optional[str] = None
+    status: Optional[str] = None
+    video_url: Optional[str] = None
+    model: Optional[str] = None
+    provider: Optional[str] = "seedance"
+    error: Optional[str] = None
+    raw: Optional[dict] = None
+
+
+def _seedance_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {_seedance_api_key()}",
+        "Content-Type": "application/json",
+    }
+
+
+def _build_seedance_content(prompt: str, images: Optional[list[str]] = None) -> list:
+    content: list = [{"type": "text", "text": prompt}]
+    for url in (images or [])[:4]:
+        if not url:
+            continue
+        content.append({"type": "image_url", "image_url": {"url": url}})
+    return content
+
+
+@app.get("/video/models")
+async def list_video_models():
+    ok = _seedance_configured()
+    return [
+        {
+            "id": "seedance:2.5",
+            "model": SEEDANCE_MODEL,
+            "name": "Seedance 2.5（火山方舟 · 文生视频）",
+            "provider": "seedance",
+            "configured": ok,
+            "default": True,
+            "note": None if ok else "请配置 SEEDANCE_API_KEY 或 ARK_API_KEY，并在方舟控制台开通 Seedance 2.5",
+        }
+    ]
+
+
+@app.post("/video/generate", response_model=VideoGenerateResponse)
+async def generate_video(req: VideoGenerateRequest):
+    """创建 Seedance 视频生成任务（异步）。"""
+    if not _seedance_api_key():
+        return VideoGenerateResponse(
+            success=False,
+            error="未配置 Seedance/方舟 API Key：请在 .env 设置 SEEDANCE_API_KEY 或 ARK_API_KEY",
+        )
+    prompt = (req.prompt or "").strip()
+    if not prompt:
+        return VideoGenerateResponse(success=False, error="prompt 不能为空")
+
+    model = (req.model or "").strip() or SEEDANCE_MODEL
+    if model.startswith("seedance:"):
+        model = SEEDANCE_MODEL
+    duration = req.duration or SEEDANCE_DEFAULT_DURATION
+    ratio = req.ratio or SEEDANCE_DEFAULT_RATIO
+    resolution = req.resolution or SEEDANCE_DEFAULT_RESOLUTION
+    payload = {
+        "model": model,
+        "content": _build_seedance_content(prompt, req.images),
+        "duration": duration,
+        "ratio": ratio,
+        "resolution": resolution,
+        "generate_audio": bool(req.generate_audio if req.generate_audio is not None else True),
+    }
+    url = f"{SEEDANCE_API_BASE.rstrip('/')}/contents/generations/tasks"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.post(url, headers=_seedance_headers(), json=payload)
+        data = res.json() if res.content else {}
+        if res.status_code >= 400:
+            err = data.get("error") or {}
+            msg = err.get("message") if isinstance(err, dict) else str(data)
+            code = err.get("code") if isinstance(err, dict) else ""
+            if code == "ModelNotOpen":
+                msg = (
+                    "方舟账号尚未开通 Seedance 2.5。请到控制台开通："
+                    "https://console.volcengine.com/ark → 模型广场 → Seedance 2.5"
+                )
+            return VideoGenerateResponse(
+                success=False, model=model, provider="seedance", error=msg or f"HTTP {res.status_code}", raw=data
+            )
+        task_id = data.get("id") or data.get("task_id")
+        if not task_id:
+            return VideoGenerateResponse(
+                success=False, model=model, error="未返回 task_id", raw=data
+            )
+        return VideoGenerateResponse(
+            success=True,
+            task_id=task_id,
+            status=data.get("status") or "pending",
+            model=model,
+            provider="seedance",
+            raw=data,
+        )
+    except Exception as e:
+        logger.exception("Seedance create task failed")
+        return VideoGenerateResponse(success=False, model=model, error=str(e))
+
+
+@app.get("/video/tasks/{task_id}", response_model=VideoGenerateResponse)
+async def get_video_task(task_id: str):
+    """查询 Seedance 视频任务状态。"""
+    if not _seedance_api_key():
+        return VideoGenerateResponse(success=False, error="未配置 API Key")
+    tid = (task_id or "").strip()
+    if not tid:
+        return VideoGenerateResponse(success=False, error="task_id 不能为空")
+    url = f"{SEEDANCE_API_BASE.rstrip('/')}/contents/generations/tasks/{urllib.parse.quote(tid)}"
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            res = await client.get(url, headers=_seedance_headers())
+        data = res.json() if res.content else {}
+        if res.status_code >= 400:
+            err = data.get("error") or {}
+            msg = err.get("message") if isinstance(err, dict) else str(data)
+            return VideoGenerateResponse(
+                success=False, task_id=tid, error=msg or f"HTTP {res.status_code}", raw=data
+            )
+        status = (data.get("status") or "").lower()
+        content = data.get("content") or {}
+        video_url = None
+        if isinstance(content, dict):
+            video_url = content.get("video_url") or content.get("url")
+        if not video_url:
+            video_url = data.get("video_url")
+        ok = status in ("succeeded", "success", "completed") and bool(video_url)
+        return VideoGenerateResponse(
+            success=ok or status in ("pending", "running", "queued", "processing"),
+            task_id=tid,
+            status=status or data.get("status"),
+            video_url=video_url,
+            model=data.get("model") or SEEDANCE_MODEL,
+            provider="seedance",
+            error=None if (ok or status in ("pending", "running", "queued", "processing")) else (data.get("error") or "生成失败"),
+            raw=data,
+        )
+    except Exception as e:
+        logger.exception("Seedance query task failed")
+        return VideoGenerateResponse(success=False, task_id=tid, error=str(e))
 
 
 # ============================================================
@@ -1582,6 +1830,385 @@ async def save_all_conversations(user_key: str, req: dict):
     conversations = req.get("conversations", [])
     _save_conversations(user_key, conversations)
     return {"success": True}
+
+
+# ============================================================
+# Inspiration Templates — 灵感模版云端同步（跨设备）
+# ============================================================
+
+INSPIRE_DIR = DATA_DIR / "inspire"
+INSPIRE_DIR.mkdir(exist_ok=True)
+INSPIRE_MAX_UPLOAD = 25 * 1024 * 1024
+
+
+# 个人站固定主桶；登录邮箱等作为别名，列表时自动合并，避免手机/电脑分桶
+INSPIRE_PRIMARY_KEY = "18400115020"
+
+
+def _inspire_safe_key(user_key: str) -> str:
+    safe = "".join(c for c in (user_key or "guest") if c.isalnum() or c in "._-@")
+    return safe or "guest"
+
+
+def _inspire_user_dir(user_key: str) -> Path:
+    d = INSPIRE_DIR / _inspire_safe_key(user_key)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _inspire_meta_path(user_key: str) -> Path:
+    return _inspire_user_dir(user_key) / "meta.json"
+
+
+def _load_inspire_meta(user_key: str) -> list:
+    path = _inspire_meta_path(user_key)
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def _save_inspire_meta(user_key: str, items: list) -> None:
+    path = _inspire_meta_path(user_key)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+    except IOError as e:
+        logger.error("Failed to save inspire meta: %s", e)
+
+
+def _inspire_related_keys(user_key: str) -> list:
+    keys: list[str] = []
+    for k in (user_key, INSPIRE_PRIMARY_KEY, "guest"):
+        sk = _inspire_safe_key(k)
+        if sk and sk not in keys:
+            keys.append(sk)
+    # 扫描已有目录，把邮箱等别名桶也纳入（限量）
+    try:
+        for child in INSPIRE_DIR.iterdir():
+            if child.is_dir():
+                name = child.name
+                if name and name not in keys:
+                    keys.append(name)
+            if len(keys) >= 12:
+                break
+    except OSError:
+        pass
+    return keys
+
+
+def _find_inspire_item(user_key: str, tpl_id: str):
+    """在主桶+别名桶中查找模版，返回 (owner_key, item)"""
+    for key in _inspire_related_keys(user_key):
+        for item in _load_inspire_meta(key):
+            if item.get("id") == tpl_id:
+                return key, item
+    return None, None
+
+
+def _consolidate_inspire_to_primary(user_key: str) -> None:
+    """把别名桶里的模版复制进主桶，保证各端读写同一份数据"""
+    primary = INSPIRE_PRIMARY_KEY
+    primary_meta = _load_inspire_meta(primary)
+    primary_ids = {x.get("id") for x in primary_meta if x.get("id")}
+    primary_sigs = {(x.get("name"), x.get("size")) for x in primary_meta}
+    primary_dir = _inspire_user_dir(primary)
+    changed = False
+    for key in _inspire_related_keys(user_key):
+        if key == primary:
+            continue
+        src_dir = _inspire_user_dir(key)
+        for item in _load_inspire_meta(key):
+            iid = item.get("id")
+            if not iid or iid in primary_ids:
+                continue
+            sig = (item.get("name"), item.get("size"))
+            if sig in primary_sigs:
+                continue
+            new_item = dict(item)
+            for fname_key in ("fileName", "coverName"):
+                fname = item.get(fname_key) or ""
+                if not fname:
+                    continue
+                src = src_dir / fname
+                dst = primary_dir / fname
+                if src.exists() and not dst.exists():
+                    try:
+                        shutil.copy2(src, dst)
+                    except OSError as e:
+                        logger.error("inspire copy failed %s -> %s: %s", src, dst, e)
+            primary_meta.append(new_item)
+            primary_ids.add(iid)
+            primary_sigs.add(sig)
+            changed = True
+    if changed:
+        primary_meta = sorted(primary_meta, key=lambda x: x.get("createdAt") or 0, reverse=True)
+        _save_inspire_meta(primary, primary_meta)
+
+
+def _save_inspire_cover_data_url(user_dir: Path, tpl_id: str, cover_data_url: str) -> str:
+    """保存 dataURL 封面，返回相对文件名；失败返回空串"""
+    if not cover_data_url or not isinstance(cover_data_url, str):
+        return ""
+    m = re.match(r"^data:(image/[\w+.-]+);base64,(.+)$", cover_data_url, re.DOTALL)
+    if not m:
+        return ""
+    mime = m.group(1).lower()
+    ext = ".jpg"
+    if "png" in mime:
+        ext = ".png"
+    elif "webp" in mime:
+        ext = ".webp"
+    elif "gif" in mime:
+        ext = ".gif"
+    try:
+        raw = base64.b64decode(m.group(2), validate=False)
+    except Exception:
+        return ""
+    if len(raw) > 8 * 1024 * 1024:
+        return ""
+    name = f"{tpl_id}_cover{ext}"
+    (user_dir / name).write_bytes(raw)
+    return name
+
+
+@app.get("/inspire/templates")
+async def list_inspire_templates(user_key: str = "guest"):
+    """列出用户灵感模版（跨设备同步；自动合并别名桶到主桶）"""
+    try:
+        _consolidate_inspire_to_primary(user_key)
+    except Exception as e:
+        logger.error("inspire consolidate failed: %s", e)
+    # 始终以主桶为准返回，避免登录邮箱空桶
+    items = _load_inspire_meta(INSPIRE_PRIMARY_KEY)
+    # 若主桶仍空，回退合并视图
+    if not items:
+        seen = set()
+        merged = []
+        for key in _inspire_related_keys(user_key):
+            for item in _load_inspire_meta(key):
+                iid = item.get("id")
+                if not iid or iid in seen:
+                    continue
+                seen.add(iid)
+                row = dict(item)
+                row["_owner_key"] = key
+                merged.append(row)
+        items = merged
+    else:
+        items = [dict(x, _owner_key=INSPIRE_PRIMARY_KEY) for x in items]
+    items = sorted(items, key=lambda x: x.get("createdAt") or 0, reverse=True)
+    return {"success": True, "templates": items, "user_key": INSPIRE_PRIMARY_KEY}
+
+
+@app.post("/inspire/templates")
+async def upload_inspire_template(
+    user_key: str = Form("guest"),
+    name: str = Form(...),
+    format: str = Form(""),
+    cover_data_url: str = Form(""),
+    file: UploadFile = File(...),
+):
+    """上传灵感模版源文件 + 可选封面（统一写入主桶）"""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="空文件")
+    if len(content) > INSPIRE_MAX_UPLOAD:
+        raise HTTPException(status_code=400, detail="文件超过 25MB")
+
+    # 忽略客户端分桶，统一写入主桶，保证手机/电脑一致
+    store_key = INSPIRE_PRIMARY_KEY
+    user_dir = _inspire_user_dir(store_key)
+    tpl_id = f"tpl_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    # 保留扩展名便于下载
+    suffix = Path(name or file.filename or "").suffix.lower()
+    if not suffix:
+        suffix = Path(file.filename or "").suffix.lower() or ".bin"
+    file_name = f"{tpl_id}{suffix}"
+    (user_dir / file_name).write_bytes(content)
+
+    cover_name = _save_inspire_cover_data_url(user_dir, tpl_id, cover_data_url)
+
+    item = {
+        "id": tpl_id,
+        "name": name or file.filename or file_name,
+        "format": (format or suffix.lstrip(".")).upper(),
+        "size": len(content),
+        "type": file.content_type or "application/octet-stream",
+        "createdAt": int(time.time() * 1000),
+        "fileName": file_name,
+        "coverName": cover_name,
+        "hasCover": bool(cover_name),
+        "_owner_key": store_key,
+    }
+    meta = _load_inspire_meta(store_key)
+    meta.insert(0, item)
+    _save_inspire_meta(store_key, meta)
+    return {"success": True, "template": item}
+
+
+@app.get("/inspire/templates/{tpl_id}/file")
+async def get_inspire_template_file(tpl_id: str, user_key: str = "guest"):
+    owner_key, item = _find_inspire_item(user_key, tpl_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="模版不存在")
+    path = _inspire_user_dir(owner_key) / item.get("fileName", "")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="源文件不存在")
+    return FileResponse(
+        str(path),
+        filename=item.get("name") or path.name,
+        media_type=item.get("type") or "application/octet-stream",
+    )
+
+
+@app.get("/inspire/templates/{tpl_id}/cover")
+async def get_inspire_template_cover(tpl_id: str, user_key: str = "guest"):
+    owner_key, item = _find_inspire_item(user_key, tpl_id)
+    if not item or not item.get("coverName"):
+        raise HTTPException(status_code=404, detail="封面不存在")
+    path = _inspire_user_dir(owner_key) / item["coverName"]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="封面不存在")
+    return FileResponse(str(path))
+
+
+@app.delete("/inspire/templates/{tpl_id}")
+async def delete_inspire_template(tpl_id: str, user_key: str = "guest"):
+    # 从所有相关桶删除，避免别名残留
+    deleted = False
+    for key in _inspire_related_keys(user_key):
+        meta = _load_inspire_meta(key)
+        item = next((x for x in meta if x.get("id") == tpl_id), None)
+        if not item:
+            continue
+        deleted = True
+        user_dir = _inspire_user_dir(key)
+        for fname_key in ("fileName", "coverName"):
+            name = item.get(fname_key) or ""
+            if name:
+                p = user_dir / name
+                if p.exists():
+                    try:
+                        p.unlink()
+                    except OSError:
+                        pass
+        meta = [x for x in meta if x.get("id") != tpl_id]
+        _save_inspire_meta(key, meta)
+    return {"success": True, "deleted": deleted}
+
+
+@app.post("/inspire/templates/{tpl_id}/cover")
+async def update_inspire_template_cover(
+    tpl_id: str,
+    user_key: str = Form("guest"),
+    cover_data_url: str = Form(...),
+):
+    """更新模版封面（跨设备同步）"""
+    owner_key, item = _find_inspire_item(user_key, tpl_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="模版不存在")
+    # 封面统一写到主桶对应条目；若条目在别名桶，先巩固
+    _consolidate_inspire_to_primary(user_key)
+    owner_key, item = _find_inspire_item(user_key, tpl_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="模版不存在")
+    store_key = INSPIRE_PRIMARY_KEY if any(
+        x.get("id") == tpl_id for x in _load_inspire_meta(INSPIRE_PRIMARY_KEY)
+    ) else owner_key
+    meta = _load_inspire_meta(store_key)
+    item = next((x for x in meta if x.get("id") == tpl_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="模版不存在")
+    user_dir = _inspire_user_dir(store_key)
+    old = item.get("coverName") or ""
+    if old:
+        old_path = user_dir / old
+        if old_path.exists():
+            try:
+                old_path.unlink()
+            except OSError:
+                pass
+    cover_name = _save_inspire_cover_data_url(user_dir, tpl_id, cover_data_url)
+    if not cover_name:
+        raise HTTPException(status_code=400, detail="封面无效")
+    item["coverName"] = cover_name
+    item["hasCover"] = True
+    _save_inspire_meta(store_key, meta)
+    return {"success": True, "template": item}
+
+
+def _inspire_links_path(user_key: str) -> Path:
+    return _inspire_user_dir(user_key) / "links.json"
+
+
+def _load_inspire_links(user_key: str) -> list:
+    path = _inspire_links_path(user_key)
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        links = data if isinstance(data, list) else data.get("links", [])
+        return links if isinstance(links, list) else []
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+@app.get("/inspire/links")
+async def get_inspire_links(user_key: str = "guest"):
+    # 合并所有别名桶链接，再以主桶为准落盘
+    merged = {}
+    for key in _inspire_related_keys(user_key):
+        for item in _load_inspire_links(key):
+            if isinstance(item, dict) and item.get("id") and item["id"] not in merged:
+                merged[item["id"]] = item
+    links = list(merged.values())
+    path = _inspire_links_path(INSPIRE_PRIMARY_KEY)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(links, f, ensure_ascii=False, indent=2)
+    except IOError:
+        pass
+    return {"success": True, "links": links, "user_key": INSPIRE_PRIMARY_KEY}
+
+
+class InspireLinksBody(BaseModel):
+    links: List[dict] = Field(default_factory=list)
+    user_key: str = "guest"
+
+
+@app.put("/inspire/links")
+async def put_inspire_links(body: InspireLinksBody):
+    """同步自定义灵感网站链接（统一写入主桶）"""
+    links = body.links if isinstance(body.links, list) else []
+    # 限制数量与字段，避免滥用
+    cleaned = []
+    for item in links[:100]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()[:40]
+        url = str(item.get("url") or "").strip()[:500]
+        if not name or not url:
+            continue
+        cleaned.append({
+            "id": str(item.get("id") or f"custom_{uuid.uuid4().hex[:10]}")[:64],
+            "name": name,
+            "url": url,
+            "desc": str(item.get("desc") or "自定义灵感链接")[:120],
+            "color": str(item.get("color") or "#52B6FB")[:32],
+        })
+    path = _inspire_links_path(INSPIRE_PRIMARY_KEY)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cleaned, f, ensure_ascii=False, indent=2)
+    except IOError as e:
+        raise HTTPException(status_code=500, detail=f"保存失败: {e}")
+    return {"success": True, "links": cleaned}
 
 
 # ============================================================

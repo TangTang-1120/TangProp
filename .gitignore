@@ -28,3 +28,11 @@ deploy/.playwright-cli/
 
 # User-specific launchd (optional local paths)
 *.plist.local
+
+# Node / local demos (large media)
+node_modules/
+demo/
+_chk.js
+_cloud_index.html
+cloud_index_check.html
+package-lock.json
